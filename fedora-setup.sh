@@ -55,7 +55,7 @@ readonly VERSION="0.2.0"
 # Ces fichiers *.list ne sont jamais versionnés (voir .gitignore) : ils sont
 # générés une fois depuis les *.list.example fournis par le dépôt (voir
 # ensure_lists_from_examples), puis personnalisés librement sans risque
-# qu'un `git pull` (--update) ne les modifie ou ne les écrase.
+# qu'une mise à jour (--update) ne les modifie ou ne les écrase.
 RPM_LIST="${SCRIPT_DIR}/rpm.list"
 FLATPAK_LIST="${SCRIPT_DIR}/flatpak.list"
 REPOS_LIST="${SCRIPT_DIR}/repos.list"
@@ -207,10 +207,11 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   flatpak.list, repos.list, gnome-extensions.list)
                   depuis les gabarits *.list.example du dépôt : c'est
                   une remise à zéro volontaire de vos personnalisations.
-  --update        Mettre à jour le script (git pull dans ${INSTALL_DIR},
-                  nécessite d'avoir été installé avec un remote git
-                  configuré). Ne touche JAMAIS aux listes réelles,
-                  seulement au script et aux gabarits *.list.example.
+  --update        Mettre à jour vers la dernière release taggée (vX.Y.Z)
+                  dans ${INSTALL_DIR} (nécessite un remote git configuré).
+                  Sans tag disponible, se rabat sur un git pull classique.
+                  Ne touche JAMAIS aux listes réelles, seulement au script
+                  et aux gabarits *.list.example.
   --uninstall     Supprimer la commande et ${INSTALL_DIR}
   --bashrc        Installer ~/.bashrc (utilisateur \$SUDO_USER) depuis
                   bashrc.example, en sauvegardant l'ancien en ~/.bashrc.bak
@@ -771,12 +772,14 @@ ask_reboot() {
 # gnome-extensions.list) ne sont JAMAIS versionnées dans le dépôt (voir
 # .gitignore) : seuls des gabarits *.list.example le sont. --install
 # régénère systématiquement les listes réelles depuis ces gabarits (remise à
-# zéro volontaire), alors que --update (git pull) ne touche qu'au script et
-# aux gabarits — jamais aux listes personnalisées de l'utilisateur.
+# zéro volontaire), alors que --update (checkout de la dernière release
+# taggée) ne touche qu'au script et aux gabarits — jamais aux listes
+# personnalisées de l'utilisateur.
 #
 # Si le dépôt source a un remote « origin » configuré, --install clone le
 # dépôt (au lieu de copier les fichiers un par un) : cela permet ensuite de
-# mettre à jour l'installation via --update (git pull). Sans remote, --install
+# mettre à jour l'installation via --update (suit les tags vX.Y.Z créés par
+# release.sh ; sans tag, se rabat sur git pull). Sans remote, --install
 # revient à la copie de fichiers classique et --update n'est pas disponible.
 #===============================================================================
 
@@ -864,7 +867,28 @@ update_command() {
     local old_version
     old_version="$(grep -m1 '^readonly VERSION=' "$INSTALL_DIR/${SCRIPT_NAME}" | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
 
-    run "Récupération des mises à jour (git pull)" git -C "$INSTALL_DIR" pull --ff-only
+    run "Récupération des tags" git -C "$INSTALL_DIR" fetch --tags --force
+
+    # --update suit toujours la dernière release taggée (vX.Y.Z), jamais un
+    # commit intermédiaire de main : --sort=-v:refname trie les tags par
+    # ordre de version sémantique décroissant (tri natif git, pas de parsing).
+    local latest_tag
+    latest_tag="$(git -C "$INSTALL_DIR" tag --sort=-v:refname | head -n1)"
+
+    if [[ -z "$latest_tag" ]]; then
+        info "Aucun tag de release trouvé : mise à jour sur la branche par défaut (git pull)."
+        run "Récupération des mises à jour (git pull)" git -C "$INSTALL_DIR" pull --ff-only
+    else
+        local current_tag
+        current_tag="$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || true)"
+
+        if [[ "$current_tag" == "$latest_tag" ]]; then
+            info "Déjà à jour (${latest_tag})."
+        else
+            run "Passage à la release ${latest_tag}" git -C "$INSTALL_DIR" checkout "$latest_tag" --
+        fi
+    fi
+
     chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
     ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
 

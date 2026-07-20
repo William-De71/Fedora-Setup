@@ -71,9 +71,10 @@ Les fichiers réels (`rpm.list`, `flatpak.list`, `repos.list`,
 - Ils sont **créés une fois**, depuis les gabarits, la première fois que le
   script tourne (ou lors d'un `--install`) — puis laissés intacts.
 - Vous les **personnalisez librement** (ajout/suppression de paquets,
-  extensions, dépôts…) sans risque qu'un `git pull` ne les modifie.
-- **`--update`** (voir ci-dessous) ne fait qu'un `git pull` : comme les
-  listes réelles ne sont pas suivies par git, il ne les touche **jamais**.
+  extensions, dépôts…) sans risque qu'une mise à jour ne les modifie.
+- **`--update`** (voir ci-dessous) ne touche que le script et les gabarits :
+  comme les listes réelles ne sont pas suivies par git, il ne les touche
+  **jamais**.
 - **`--install`**, en revanche, **régénère toujours** les listes réelles
   depuis les gabarits — c'est le moyen explicite de repartir d'une
   configuration propre si besoin.
@@ -84,16 +85,38 @@ Si l'installation a été faite depuis un dépôt avec un remote `origin`
 configuré (clone git), une mise à jour est possible sans tout réinstaller :
 
 ```bash
-sudo fedora-setup --update   # git pull dans /opt/fedora-setup (script + gabarits)
+sudo fedora-setup --update
 ```
 
-`--update` ne modifie que le script et les gabarits `*.list.example` — vos
-listes personnalisées (`rpm.list`, `flatpak.list`, …) ne sont jamais
-touchées.
+`--update` installe toujours la **dernière release taggée** (`vX.Y.Z`),
+jamais un commit intermédiaire de `main` : il récupère les tags
+(`git fetch --tags`) et bascule sur le plus récent. S'il n'existe encore
+aucun tag sur le dépôt, il se rabat sur un `git pull` classique.
+
+Dans tous les cas, `--update` ne modifie que le script et les gabarits
+`*.list.example` — vos listes personnalisées (`rpm.list`, `flatpak.list`, …)
+ne sont jamais touchées.
 
 Sans remote configuré au moment de `--install`, `--update` n'est pas
 disponible (le script vous le signale) : relancez `--install` depuis un
 clone à jour dans ce cas.
+
+### Publier une nouvelle version (`release.sh`)
+
+Pour les mainteneurs du dépôt : `release.sh` automatise la publication d'une
+nouvelle version de `fedora-setup.sh`.
+
+```bash
+./release.sh patch   # x.y.Z -> x.y.(Z+1) — corrections
+./release.sh minor    # x.Y.z -> x.(Y+1).0 — nouvelles fonctionnalités
+./release.sh major    # X.y.z -> (X+1).0.0 — changements non rétro-compatibles
+```
+
+Le script incrémente `VERSION` dans `fedora-setup.sh`, commite, crée le tag
+`vX.Y.Z` et pousse le tout vers `origin` (après confirmation). Le push du tag
+déclenche automatiquement le workflow GitHub Actions
+(`.github/workflows/release.yml`), qui crée la Release GitHub correspondante
+avec des notes générées automatiquement à partir des commits.
 
 Pour tout retirer :
 
