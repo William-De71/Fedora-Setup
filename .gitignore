@@ -1,3 +1,9 @@
 # Journaux d'exécution générés par le script
 *.log
 logfile_*
+
+# Listes personnalisées générées depuis les *.list.example (jamais versionnées)
+rpm.list
+flatpak.list
+repos.list
+gnome-extensions.list

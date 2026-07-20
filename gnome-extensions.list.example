@@ -1,0 +1,23 @@
+# =============================================================================
+# Liste des extensions GNOME Shell gérées par fedora-setup.sh
+#
+# Syntaxe (une entrée par ligne) :
+#   add:uuid-extension   -> installe (extensions.gnome.org) et active
+#   del:uuid-extension   -> désinstalle
+#   uuid-extension       -> équivalent à add:
+#   # ...                -> commentaire (ignoré)
+#
+# Géré via gnome-extensions-cli (commande gext), installé automatiquement
+# pour l'utilisateur courant (pipx). Les extensions GNOME Shell sont un
+# concept par-utilisateur : le script bascule sur $SUDO_USER pour ces
+# opérations, même s'il tourne globalement en sudo.
+#
+# Pour trouver l'UUID d'une extension : https://extensions.gnome.org
+# (visible dans l'URL de la page, ou via gext search <nom>)
+# =============================================================================
+
+# --- Exemples (décommentez pour activer) ---
+#add:dash-to-panel@jderose9.github.com
+#add:appindicatorsupport@rgcjonas.gmail.com
+#add:caffeine@patapon.info
+#add:clipboard-indicator@tudmotu.com

@@ -19,7 +19,9 @@ et s'adapte donc à n'importe quel PC (NVIDIA, AMD, Intel, ou hybride).
 5. **Codecs multimédia** : ffmpeg complet, groupes multimedia RPM Fusion.
 6. **Paquets personnalisés** : installation/suppression de RPM et de Flatpaks
    d'après deux fichiers de listes indépendants.
-7. Propose un **redémarrage** si nécessaire (`dnf needs-restarting`).
+7. **Extensions GNOME Shell** : installation/suppression par UUID d'après
+   `gnome-extensions.list`, via `gnome-extensions-cli`.
+8. Propose un **redémarrage** si nécessaire (`dnf needs-restarting`).
 
 Le script est **idempotent** : il peut être relancé sans risque, il ne refait
 que ce qui est nécessaire.
@@ -34,7 +36,9 @@ sudo ./fedora-setup.sh --install
 ```
 
 Cette commande :
-- copie le projet dans **`/opt/fedora-setup`** (script + listes + README) ;
+- clone le dépôt dans **`/opt/fedora-setup`** si un remote `origin` est
+  configuré sur le dépôt source (ce qui permet ensuite d'utiliser `--update`) ;
+  sinon, elle copie simplement le projet (script + listes + README) ;
 - crée le lien **`/usr/local/bin/fedora-setup`** (ce dossier est dans le `PATH`).
 
 Ensuite, depuis n'importe où :
@@ -42,11 +46,50 @@ Ensuite, depuis n'importe où :
 ```bash
 sudo fedora-setup            # exécution complète
 fedora-setup --help          # aide
+fedora-setup --version       # version installée
 ```
 
-> Les listes à personnaliser se trouvent alors dans `/opt/fedora-setup/rpm.list`
-> et `/opt/fedora-setup/flatpak.list`. Une réinstallation (`--install`) met à
-> jour le script mais **ne réécrase pas** des listes déjà personnalisées.
+> Les listes à personnaliser se trouvent alors dans `/opt/fedora-setup/rpm.list`,
+> `/opt/fedora-setup/flatpak.list` et `/opt/fedora-setup/gnome-extensions.list`.
+>
+> ⚠️ **`--install` régénère toujours ces listes** depuis les gabarits
+> `*.list.example` du dépôt (remise à zéro volontaire de vos
+> personnalisations). Voir [Listes réelles vs gabarits](#listes-réelles-vs-gabarits)
+> ci-dessous pour comprendre pourquoi et comment `--update` s'en distingue.
+
+### Listes réelles vs gabarits
+
+Le dépôt ne versionne **que des gabarits** : `rpm.list.example`,
+`flatpak.list.example`, `repos.list.example`, `gnome-extensions.list.example`.
+Les fichiers réels (`rpm.list`, `flatpak.list`, `repos.list`,
+`gnome-extensions.list`) ne sont **jamais commités** (voir `.gitignore`) :
+
+- Ils sont **créés une fois**, depuis les gabarits, la première fois que le
+  script tourne (ou lors d'un `--install`) — puis laissés intacts.
+- Vous les **personnalisez librement** (ajout/suppression de paquets,
+  extensions, dépôts…) sans risque qu'un `git pull` ne les modifie.
+- **`--update`** (voir ci-dessous) ne fait qu'un `git pull` : comme les
+  listes réelles ne sont pas suivies par git, il ne les touche **jamais**.
+- **`--install`**, en revanche, **régénère toujours** les listes réelles
+  depuis les gabarits — c'est le moyen explicite de repartir d'une
+  configuration propre si besoin.
+
+### Mettre à jour l'installation système
+
+Si l'installation a été faite depuis un dépôt avec un remote `origin`
+configuré (clone git), une mise à jour est possible sans tout réinstaller :
+
+```bash
+sudo fedora-setup --update   # git pull dans /opt/fedora-setup (script + gabarits)
+```
+
+`--update` ne modifie que le script et les gabarits `*.list.example` — vos
+listes personnalisées (`rpm.list`, `flatpak.list`, …) ne sont jamais
+touchées.
+
+Sans remote configuré au moment de `--install`, `--update` n'est pas
+disponible (le script vous le signale) : relancez `--install` depuis un
+clone à jour dans ce cas.
 
 Pour tout retirer :
 
@@ -75,14 +118,18 @@ sudo fedora-setup
 | `-r FICHIER` | Liste RPM à utiliser (défaut : `rpm.list` à côté du script) |
 | `-f FICHIER` | Liste Flatpak à utiliser (défaut : `flatpak.list`) |
 | `-d FICHIER` | Liste de dépôts tiers à utiliser (défaut : `repos.list`) |
+| `-e FICHIER` | Liste d'extensions GNOME à utiliser (défaut : `gnome-extensions.list`) |
 | `--no-update` | Sauter les mises à jour RPM/Flatpak |
 | `--no-firmware` | Sauter les mises à jour firmware |
 | `--no-gpu` | Sauter l'installation des pilotes graphiques |
 | `--no-repos` | Ne pas ajouter les dépôts tiers de `repos.list` |
-| `--no-lists` | Ne pas traiter les fichiers de listes |
+| `--no-lists` | Ne pas traiter les fichiers `rpm.list`/`flatpak.list` |
+| `--no-gnome-ext` | Ne pas traiter `gnome-extensions.list` |
 | `-y`, `--yes` | Répondre « oui » à toutes les questions (non interactif) |
 | `-q`, `--quiet` | Affichage compact (OK/ERREUR), détails dans le log uniquement |
+| `-v`, `--version` | Afficher la version du script |
 | `--install` | Installer la commande système `fedora-setup` (voir plus haut) |
+| `--update` | Mettre à jour l'installation système (nécessite un remote git) |
 | `--uninstall` | Désinstaller la commande et `/opt/fedora-setup` |
 | `-h`, `--help` | Afficher l'aide |
 
@@ -100,6 +147,11 @@ sudo ./fedora-setup.sh --no-gpu --no-lists
 ```
 
 ## Format des fichiers de listes
+
+> Rappel : `rpm.list`, `flatpak.list`, `repos.list` et `gnome-extensions.list`
+> sont générés depuis leurs gabarits `*.list.example` respectifs (voir
+> [Listes réelles vs gabarits](#listes-réelles-vs-gabarits)) — éditez les
+> fichiers réels, pas les gabarits, pour vos personnalisations quotidiennes.
 
 Une entrée par ligne, dans `rpm.list` et `flatpak.list` :
 
@@ -144,6 +196,30 @@ Pour retrouver l'URL et la clé d'un dépôt déjà présent sur votre machine :
 ```bash
 grep -E 'baseurl|gpgkey|^\[' /etc/yum.repos.d/*.repo
 ```
+
+## Extensions GNOME Shell (`gnome-extensions.list`)
+
+Une entrée par ligne, même syntaxe `add:`/`del:` que `rpm.list`/`flatpak.list`,
+avec l'UUID de l'extension (visible dans l'URL de sa page sur
+<https://extensions.gnome.org>) :
+
+```
+add:dash-to-panel@jderose9.github.com   # installe et active
+del:dash-to-panel@jderose9.github.com   # désinstalle
+```
+
+Le script installe automatiquement l'outil
+[`gnome-extensions-cli`](https://github.com/essembeh/gnome-extensions-cli)
+(commande `gext`, via `pipx`) puis l'utilise pour installer/activer ou
+désinstaller chaque entrée.
+
+> **Particularité** : les extensions GNOME Shell sont un concept
+> **par-utilisateur** (répertoire `~/.local/share/gnome-shell/extensions` et
+> réglages dans le profil de session), contrairement au reste du script qui
+> opère en root. `fedora-setup` détecte donc l'utilisateur réel derrière le
+> `sudo` (variable `$SUDO_USER`) et exécute `gext` en son nom, avec son bus
+> D-Bus de session — aucune action manuelle requise, mais le script doit être
+> lancé via `sudo` (pas en root direct) pour que `$SUDO_USER` soit défini.
 
 ## Journal
 

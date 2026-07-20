@@ -48,10 +48,18 @@ SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
 LOG_FILE="/var/log/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
 readonly SCRIPT_PATH SCRIPT_DIR SCRIPT_NAME LOG_FILE
 
-# Fichiers de listes par défaut (surchargables via -r / -f / -d)
+# Version du script (affichée par -v/--version et au démarrage)
+readonly VERSION="0.2.0"
+
+# Fichiers de listes par défaut (surchargables via -r / -f / -d / -e).
+# Ces fichiers *.list ne sont jamais versionnés (voir .gitignore) : ils sont
+# générés une fois depuis les *.list.example fournis par le dépôt (voir
+# ensure_lists_from_examples), puis personnalisés librement sans risque
+# qu'un `git pull` (--update) ne les modifie ou ne les écrase.
 RPM_LIST="${SCRIPT_DIR}/rpm.list"
 FLATPAK_LIST="${SCRIPT_DIR}/flatpak.list"
 REPOS_LIST="${SCRIPT_DIR}/repos.list"
+GNOME_EXT_LIST="${SCRIPT_DIR}/gnome-extensions.list"
 
 # Emplacements utilisés par --install / --uninstall :
 #   - les fichiers du projet sont copiés dans INSTALL_DIR
@@ -66,6 +74,7 @@ DO_FIRMWARE=1      # Mise à jour firmwares (fwupd)
 DO_GPU=1           # Installation pilotes graphiques
 DO_REPOS=1         # Ajout des dépôts tiers de repos.list (interactif)
 DO_LISTS=1         # Traitement des listes rpm.list / flatpak.list
+DO_GNOME_EXT=1     # Traitement de la liste gnome-extensions.list
 VERBOSE=1          # Affiche la sortie des commandes au lieu du seul log
 ASSUME_YES=0       # Répondre « oui » automatiquement (--yes) : aucune question
 
@@ -177,19 +186,40 @@ Options :
   -r FICHIER      Liste de paquets RPM      (défaut : ${RPM_LIST})
   -f FICHIER      Liste de paquets Flatpak  (défaut : ${FLATPAK_LIST})
   -d FICHIER      Liste de dépôts tiers     (défaut : ${REPOS_LIST})
+  -e FICHIER      Liste d'extensions GNOME  (défaut : ${GNOME_EXT_LIST})
   --no-update     Ne pas faire les mises à jour RPM/Flatpak
   --no-firmware   Ne pas mettre à jour les firmwares (fwupd)
   --no-gpu        Ne pas installer les pilotes graphiques
   --no-repos      Ne pas ajouter les dépôts tiers de repos.list
-  --no-lists      Ne pas traiter les fichiers de listes
+  --no-lists      Ne pas traiter les fichiers de listes rpm.list/flatpak.list
+  --no-gnome-ext  Ne pas traiter la liste gnome-extensions.list
   -y, --yes       Répondre « oui » à toutes les questions (non interactif)
   -q, --quiet     Affichage compact (OK/ERREUR), détails uniquement dans le log
+  -v, --version   Afficher la version du script
   -h, --help      Afficher cette aide
 
 Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
   --install       Copier le projet dans ${INSTALL_DIR} et créer
                   le lien ${BIN_DIR}/${CMD_NAME}
+                  (clone git si un remote « origin » est configuré,
+                  ce qui permet ensuite d'utiliser --update).
+                  Régénère aussi les listes réelles (rpm.list,
+                  flatpak.list, repos.list, gnome-extensions.list)
+                  depuis les gabarits *.list.example du dépôt : c'est
+                  une remise à zéro volontaire de vos personnalisations.
+  --update        Mettre à jour le script (git pull dans ${INSTALL_DIR},
+                  nécessite d'avoir été installé avec un remote git
+                  configuré). Ne touche JAMAIS aux listes réelles,
+                  seulement au script et aux gabarits *.list.example.
   --uninstall     Supprimer la commande et ${INSTALL_DIR}
+
+Listes réelles vs gabarits :
+  Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
+  flatpak.list.example, repos.list.example, gnome-extensions.list.example).
+  Les fichiers réels (rpm.list, flatpak.list, ...) sont générés une seule
+  fois depuis ces gabarits (jamais écrasés ensuite, sauf par --install
+  explicitement) : vous pouvez les personnaliser librement, --update ne
+  les modifiera jamais.
 
 Format de rpm.list / flatpak.list (une entrée par ligne) :
   add:paquet      installe le paquet
@@ -202,6 +232,12 @@ Format de repos.list (dépôts tiers, une ligne par dépôt) :
   Le script demande pour chaque dépôt s'il faut l'ajouter (--yes = tout oui).
   Installez ensuite ses paquets via rpm.list (ex. add:vivaldi-stable).
 
+Format de gnome-extensions.list (une entrée par ligne, syntaxe add:/del:
+identique à rpm.list/flatpak.list) : UUID de l'extension GNOME Shell,
+ex. add:dash-to-panel@jderose9.github.com. Géré via gnome-extensions-cli
+(gext), installé automatiquement pour l'utilisateur courant (via pipx) —
+les extensions GNOME sont un concept par-utilisateur, pas root.
+
 Une fois installé, lancez simplement :  sudo ${CMD_NAME}
 EOF
 }
@@ -209,6 +245,19 @@ EOF
 #===============================================================================
 # VÉRIFICATIONS PRÉALABLES
 #===============================================================================
+
+# Crée chaque fichier *.list manquant à partir de son *.list.example
+# (jamais l'inverse : un *.list déjà présent n'est jamais touché ici).
+ensure_lists_from_examples() {
+    local dest example
+    for dest in "$RPM_LIST" "$FLATPAK_LIST" "$REPOS_LIST" "$GNOME_EXT_LIST"; do
+        example="${dest}.example"
+        if [[ ! -f "$dest" && -f "$example" ]]; then
+            install -m 644 "$example" "$dest"
+            info "Créé $(basename "$dest") depuis $(basename "$example")"
+        fi
+    done
+}
 
 checks() {
     # Le script doit être lancé en root (via sudo) : dnf, fwupd et les
@@ -223,6 +272,8 @@ checks() {
         error "Ce script est prévu pour Fedora uniquement."
         exit 1
     fi
+
+    ensure_lists_from_examples
 
     # Connexion réseau indispensable (dépôts, téléchargements)
     if ! ping -c 1 -W 3 fedoraproject.org &> /dev/null; then
@@ -539,6 +590,112 @@ install_lists() {
 }
 
 #===============================================================================
+# EXTENSIONS GNOME SHELL (gnome-extensions.list)
+#
+# Les extensions GNOME Shell sont un concept PAR-UTILISATEUR (répertoire
+# ~/.local/share/gnome-shell/extensions et clé dconf enabled-extensions du
+# profil utilisateur) : impossible de les gérer en root. Le script, lancé
+# globalement via sudo, bascule donc sur l'utilisateur réel ($SUDO_USER) et
+# son bus D-Bus de session pour toutes les opérations gext.
+#===============================================================================
+
+# Détermine l'utilisateur réel derrière le sudo (celui qui a une session GNOME).
+gnome_user() {
+    if [[ -n "${SUDO_USER:-}" ]]; then
+        echo "$SUDO_USER"
+    else
+        error "Impossible de déterminer l'utilisateur cible pour les extensions GNOME (lancez via sudo, pas en root direct)."
+        return 1
+    fi
+}
+
+# Exécute une commande en tant que l'utilisateur GNOME cible, avec son bus
+# D-Bus de session (nécessaire pour que gext puisse parler à GNOME Shell).
+run_as_gnome_user() {
+    local user uid
+    user="$(gnome_user)" || return 1
+    uid="$(id -u "$user")"
+    sudo -u "$user" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
+        XDG_RUNTIME_DIR="/run/user/${uid}" \
+        "$@"
+}
+
+# Vrai si la commande gext est disponible pour l'utilisateur cible
+gext_installed() {
+    run_as_gnome_user command -v gext &> /dev/null
+}
+
+# Vrai si l'extension (UUID) est installée (activée ou non) pour l'utilisateur cible
+gnome_ext_installed() {
+    run_as_gnome_user gext list -a 2>/dev/null | grep -qF "$1"
+}
+
+# Installe gnome-extensions-cli (gext) pour l'utilisateur cible via pipx.
+# --system-site-packages : réutilise PyGObject déjà présent au niveau système
+# au lieu de tenter de le recompiler dans l'environnement virtuel de pipx.
+setup_gnome_extensions_cli() {
+    if gext_installed; then
+        return 0
+    fi
+
+    if ! has_cmd pipx; then
+        run "Installation de pipx" dnf install -y pipx
+    fi
+
+    run "Installation de gnome-extensions-cli (pipx, utilisateur $(gnome_user))" \
+        run_as_gnome_user pipx install gnome-extensions-cli --system-site-packages
+}
+
+# Lit gnome-extensions.list et installe/désinstalle chaque extension.
+#   $1 : chemin du fichier
+process_gnome_extensions() {
+    local file="$1"
+    local line action uuid
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Nettoyage : espaces autour, commentaires, lignes vides
+        line="${line#"${line%%[![:space:]]*}"}"   # trim gauche
+        line="${line%"${line##*[![:space:]]}"}"   # trim droite
+        [[ -z "$line" || "$line" == \#* ]] && continue
+
+        # Détermine l'action : add:/del:, sinon add implicite
+        case "$line" in
+            add:*) action="add"; uuid="${line#add:}" ;;
+            del:*) action="del"; uuid="${line#del:}" ;;
+            *)     action="add"; uuid="$line" ;;
+        esac
+
+        if [[ "$action" == "add" ]] && ! gnome_ext_installed "$uuid"; then
+            run "Installation extension GNOME $uuid" \
+                run_as_gnome_user gext install --filesystem "$uuid"
+            run "Activation extension GNOME $uuid" \
+                run_as_gnome_user gext enable "$uuid"
+        elif [[ "$action" == "del" ]] && gnome_ext_installed "$uuid"; then
+            run "Suppression extension GNOME $uuid" \
+                run_as_gnome_user gext uninstall "$uuid"
+        fi
+    done < "$file"
+}
+
+install_gnome_extensions() {
+    section "Extensions GNOME Shell ($(basename "$GNOME_EXT_LIST"))"
+
+    if [[ ! -f "$GNOME_EXT_LIST" ]]; then
+        info "Aucun fichier $GNOME_EXT_LIST : étape ignorée."
+        return
+    fi
+
+    if ! gnome_user &> /dev/null; then
+        info "Étape ignorée (voir erreur ci-dessus)."
+        return
+    fi
+
+    setup_gnome_extensions_cli
+    process_gnome_extensions "$GNOME_EXT_LIST"
+}
+
+#===============================================================================
 # REDÉMARRAGE
 #===============================================================================
 
@@ -562,14 +719,28 @@ ask_reboot() {
 }
 
 #===============================================================================
-# INSTALLATION / DÉSINSTALLATION SYSTÈME
+# INSTALLATION / MISE À JOUR / DÉSINSTALLATION SYSTÈME
 #
 # --install copie le projet dans /opt/fedora-setup et crée un lien symbolique
 # /usr/local/bin/fedora-setup, de sorte que la commande « fedora-setup » soit
 # appelable depuis n'importe quel dossier (/usr/local/bin est dans le PATH).
-# Les listes rpm.list / flatpak.list se trouvent alors dans /opt/fedora-setup
-# et peuvent y être éditées durablement.
+#
+# Les listes réelles (rpm.list, flatpak.list, repos.list,
+# gnome-extensions.list) ne sont JAMAIS versionnées dans le dépôt (voir
+# .gitignore) : seuls des gabarits *.list.example le sont. --install
+# régénère systématiquement les listes réelles depuis ces gabarits (remise à
+# zéro volontaire), alors que --update (git pull) ne touche qu'au script et
+# aux gabarits — jamais aux listes personnalisées de l'utilisateur.
+#
+# Si le dépôt source a un remote « origin » configuré, --install clone le
+# dépôt (au lieu de copier les fichiers un par un) : cela permet ensuite de
+# mettre à jour l'installation via --update (git pull). Sans remote, --install
+# revient à la copie de fichiers classique et --update n'est pas disponible.
 #===============================================================================
+
+# Fichiers du projet installés tels quels (gabarits *.example + README)
+INSTALL_FILES=(rpm.list.example flatpak.list.example repos.list.example gnome-extensions.list.example README.md)
+readonly INSTALL_FILES
 
 install_command() {
     if [[ $(id -u) -ne 0 ]]; then
@@ -579,23 +750,76 @@ install_command() {
 
     echo -e "${C_BOLD}Installation de la commande « ${CMD_NAME} »${C_RESET}"
 
-    # Copie du projet complet (script + listes + README) vers INSTALL_DIR
-    install -d "$INSTALL_DIR"
-    install -m 755 "${SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
-    for f in rpm.list flatpak.list repos.list README.md; do
-        # On n'écrase pas une liste déjà personnalisée lors d'une réinstallation
-        if [[ -f "${SCRIPT_DIR}/$f" && ! -f "${INSTALL_DIR}/$f" ]]; then
-            install -m 644 "${SCRIPT_DIR}/$f" "${INSTALL_DIR}/$f"
-        fi
+    local origin_url
+    origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
+
+    if [[ -n "$origin_url" && ! -d "$INSTALL_DIR/.git" ]]; then
+        # Un remote existe et aucune installation git n'est déjà en place :
+        # on clone pour pouvoir utiliser --update ensuite.
+        rm -rf "$INSTALL_DIR"
+        run "Clonage du dépôt dans ${INSTALL_DIR}" git clone "$origin_url" "$INSTALL_DIR"
+    elif [[ -n "$origin_url" && -d "$INSTALL_DIR/.git" ]]; then
+        info "Installation git déjà en place dans ${INSTALL_DIR} (utilisez --update pour la synchroniser)."
+    else
+        # Pas de remote configuré : copie de fichiers classique, --update indisponible.
+        install -d "$INSTALL_DIR"
+        install -m 755 "${SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
+        for f in "${INSTALL_FILES[@]}"; do
+            if [[ -f "${SCRIPT_DIR}/$f" ]]; then
+                install -m 644 "${SCRIPT_DIR}/$f" "${INSTALL_DIR}/$f"
+            fi
+        done
+        info "Aucun remote git « origin » configuré : installation par copie, --update indisponible."
+    fi
+
+    # Le script installé doit être exécutable même après un clone git
+    chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
+
+    # Remise à zéro volontaire des listes réelles depuis les gabarits *.example
+    # (--install écrase toujours ; --update, lui, n'y touche jamais)
+    local f dest
+    for f in "${INSTALL_DIR}"/*.list.example; do
+        [[ -e "$f" ]] || continue
+        dest="${f%.example}"
+        install -m 644 "$f" "$dest"
     done
 
     # Lien symbolique dans le PATH -> commande accessible partout
     ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
 
     echo -e "    Fichiers installés dans : ${C_BLUE}${INSTALL_DIR}${C_RESET}"
-    echo -e "    Commande disponible     : ${C_GREEN}${CMD_NAME}${C_RESET} (${BIN_DIR}/${CMD_NAME})"
-    echo -e "    Listes à personnaliser  : ${INSTALL_DIR}/rpm.list , ${INSTALL_DIR}/flatpak.list"
+    echo -e "    Commande disponible     : ${C_GREEN}${CMD_NAME}${C_RESET} (${BIN_DIR}/${CMD_NAME}), version ${VERSION}"
+    echo -e "    Listes à personnaliser  : ${INSTALL_DIR}/rpm.list , ${INSTALL_DIR}/flatpak.list , ${INSTALL_DIR}/gnome-extensions.list"
+    echo -e "    ${C_YELLOW}Note : --install régénère toujours ces listes depuis les *.list.example${C_RESET}"
+    echo -e "    ${C_YELLOW}(remise à zéro) ; --update, lui, ne les touche jamais.${C_RESET}"
     echo -e "\n    Lancez maintenant : ${C_YELLOW}sudo ${CMD_NAME}${C_RESET}"
+}
+
+update_command() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "La mise à jour nécessite les droits root : sudo ${CMD_NAME} --update"
+        exit 1
+    fi
+
+    if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+        error "Installation non-git dans ${INSTALL_DIR} : impossible de mettre à jour."
+        error "Relancez --install depuis un clone avec un remote « origin » configuré."
+        exit 1
+    fi
+
+    echo -e "${C_BOLD}Mise à jour de la commande « ${CMD_NAME} »${C_RESET}"
+
+    local old_version
+    old_version="$(grep -m1 '^readonly VERSION=' "$INSTALL_DIR/${SCRIPT_NAME}" | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
+
+    run "Récupération des mises à jour (git pull)" git -C "$INSTALL_DIR" pull --ff-only
+    chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
+    ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
+
+    local new_version
+    new_version="$(grep -m1 '^readonly VERSION=' "$INSTALL_DIR/${SCRIPT_NAME}" | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
+
+    echo -e "    Version : ${C_YELLOW}${old_version}${C_RESET} -> ${C_GREEN}${new_version}${C_RESET}"
 }
 
 uninstall_command() {
@@ -621,14 +845,18 @@ parse_args() {
             -r)            RPM_LIST="$(realpath "$2")"; shift 2 ;;
             -f)            FLATPAK_LIST="$(realpath "$2")"; shift 2 ;;
             -d)            REPOS_LIST="$(realpath "$2")"; shift 2 ;;
+            -e)            GNOME_EXT_LIST="$(realpath "$2")"; shift 2 ;;
             --no-update)   DO_UPDATE=0; shift ;;
             --no-firmware) DO_FIRMWARE=0; shift ;;
             --no-gpu)      DO_GPU=0; shift ;;
             --no-repos)    DO_REPOS=0; shift ;;
             --no-lists)    DO_LISTS=0; shift ;;
+            --no-gnome-ext) DO_GNOME_EXT=0; shift ;;
             -y|--yes)      ASSUME_YES=1; shift ;;
             -q|--quiet)    VERBOSE=0; shift ;;
+            -v|--version)  echo "$VERSION"; exit 0 ;;
             --install)     install_command; exit 0 ;;
+            --update)      update_command; exit 0 ;;
             --uninstall)   uninstall_command; exit 0 ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
@@ -643,7 +871,7 @@ parse_args() {
 main() {
     parse_args "$@"
 
-    echo -e "${C_BOLD}=== Fedora Setup — post-installation & maintenance ===${C_RESET}"
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — post-installation & maintenance ===${C_RESET}"
     checks
 
     configure_dnf
@@ -657,6 +885,7 @@ main() {
     setup_multimedia
 
     [[ $DO_LISTS -eq 1 ]]    && install_lists
+    [[ $DO_GNOME_EXT -eq 1 ]] && install_gnome_extensions
 
     ask_reboot
 }
