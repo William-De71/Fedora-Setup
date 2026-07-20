@@ -48,6 +48,14 @@ add:p7zip
 add:p7zip-plugins
 add:unrar
 
+# --- Paquets issus des dépôts tiers (voir repos.list) ---
+# Décommentez selon les dépôts que vous avez acceptés à l'exécution.
+#add:vivaldi-stable
+#add:code
+#add:sublime-text
+#add:sublime-merge
+#add:VirtualBox-7.1
+
 # --- Nettoyage ---
 del:gnome-boxes
 del:abrt

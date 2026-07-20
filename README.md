@@ -74,10 +74,13 @@ sudo fedora-setup
 |---|---|
 | `-r FICHIER` | Liste RPM à utiliser (défaut : `rpm.list` à côté du script) |
 | `-f FICHIER` | Liste Flatpak à utiliser (défaut : `flatpak.list`) |
+| `-d FICHIER` | Liste de dépôts tiers à utiliser (défaut : `repos.list`) |
 | `--no-update` | Sauter les mises à jour RPM/Flatpak |
 | `--no-firmware` | Sauter les mises à jour firmware |
 | `--no-gpu` | Sauter l'installation des pilotes graphiques |
+| `--no-repos` | Ne pas ajouter les dépôts tiers de `repos.list` |
 | `--no-lists` | Ne pas traiter les fichiers de listes |
+| `-y`, `--yes` | Répondre « oui » à toutes les questions (non interactif) |
 | `-q`, `--quiet` | Affichage compact (OK/ERREUR), détails dans le log uniquement |
 | `--install` | Installer la commande système `fedora-setup` (voir plus haut) |
 | `--uninstall` | Désinstaller la commande et `/opt/fedora-setup` |
@@ -110,6 +113,37 @@ paquet         # équivalent à add:paquet
 Pour les Flatpaks, utiliser l'identifiant complet de l'application
 (ex. `org.gnome.Boxes`), à trouver sur <https://flathub.org> ou via
 `flatpak search <nom>`.
+
+## Dépôts tiers (`repos.list`)
+
+Certaines applications (Vivaldi, VS Code, Sublime Text, VirtualBox…) ne sont
+pas dans les dépôts Fedora : il faut d'abord **ajouter leur dépôt** et sa clé
+GPG. C'est le rôle du fichier `repos.list`, une ligne par dépôt :
+
+```
+nom | url_de_la_cle_gpg | url_du_fichier.repo
+```
+
+Exemple :
+
+```
+vivaldi | https://repo.vivaldi.com/archive/linux_signing_key.pub | https://repo.vivaldi.com/archive/vivaldi-fedora.repo
+```
+
+À l'exécution, le script **demande pour chaque dépôt** s'il faut l'ajouter
+(répondre `y`/`N`). Utilisez `--yes` pour tout accepter sans question, ou
+`--no-repos` pour ignorer complètement cette étape.
+
+Une fois le dépôt ajouté, installez ses paquets comme les autres, via
+`rpm.list` — par exemple `add:vivaldi-stable`, `add:code`, `add:sublime-text`,
+`add:VirtualBox-7.1`. Ces lignes sont déjà présentes (commentées) dans
+`rpm.list` : décommentez celles qui correspondent aux dépôts que vous acceptez.
+
+Pour retrouver l'URL et la clé d'un dépôt déjà présent sur votre machine :
+
+```bash
+grep -E 'baseurl|gpgkey|^\[' /etc/yum.repos.d/*.repo
+```
 
 ## Journal
 

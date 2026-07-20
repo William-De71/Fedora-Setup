@@ -48,9 +48,10 @@ SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
 LOG_FILE="/var/log/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
 readonly SCRIPT_PATH SCRIPT_DIR SCRIPT_NAME LOG_FILE
 
-# Fichiers de listes par défaut (surchargables via -r / -f)
+# Fichiers de listes par défaut (surchargables via -r / -f / -d)
 RPM_LIST="${SCRIPT_DIR}/rpm.list"
 FLATPAK_LIST="${SCRIPT_DIR}/flatpak.list"
+REPOS_LIST="${SCRIPT_DIR}/repos.list"
 
 # Emplacements utilisés par --install / --uninstall :
 #   - les fichiers du projet sont copiés dans INSTALL_DIR
@@ -63,8 +64,10 @@ readonly CMD_NAME="fedora-setup"
 DO_UPDATE=1        # Mise à jour RPM + Flatpak
 DO_FIRMWARE=1      # Mise à jour firmwares (fwupd)
 DO_GPU=1           # Installation pilotes graphiques
+DO_REPOS=1         # Ajout des dépôts tiers de repos.list (interactif)
 DO_LISTS=1         # Traitement des listes rpm.list / flatpak.list
 VERBOSE=1          # Affiche la sortie des commandes au lieu du seul log
+ASSUME_YES=0       # Répondre « oui » automatiquement (--yes) : aucune question
 
 # Renseigné par gpu_detect() : chaîne lspci des contrôleurs graphiques
 GPU_INFO=""
@@ -133,6 +136,20 @@ run() {
     return "$rc"
 }
 
+# Pose une question oui/non (non par défaut).
+#   $1 : la question
+# Renvoie 0 pour « oui », 1 pour « non ». Avec --yes (ASSUME_YES=1),
+# répond automatiquement « oui » sans rien demander.
+ask_yes_no() {
+    local question="$1" answer
+    if [[ $ASSUME_YES -eq 1 ]]; then
+        return 0
+    fi
+    echo -ne "    ${question} [y/N] : "
+    read -r answer
+    [[ "${answer,,}" == "y" ]]
+}
+
 # Vrai si le paquet RPM est installé
 pkg_installed() {
     rpm -q "$1" &> /dev/null
@@ -159,10 +176,13 @@ depuis des fichiers de listes.
 Options :
   -r FICHIER      Liste de paquets RPM      (défaut : ${RPM_LIST})
   -f FICHIER      Liste de paquets Flatpak  (défaut : ${FLATPAK_LIST})
+  -d FICHIER      Liste de dépôts tiers     (défaut : ${REPOS_LIST})
   --no-update     Ne pas faire les mises à jour RPM/Flatpak
   --no-firmware   Ne pas mettre à jour les firmwares (fwupd)
   --no-gpu        Ne pas installer les pilotes graphiques
+  --no-repos      Ne pas ajouter les dépôts tiers de repos.list
   --no-lists      Ne pas traiter les fichiers de listes
+  -y, --yes       Répondre « oui » à toutes les questions (non interactif)
   -q, --quiet     Affichage compact (OK/ERREUR), détails uniquement dans le log
   -h, --help      Afficher cette aide
 
@@ -171,11 +191,16 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   le lien ${BIN_DIR}/${CMD_NAME}
   --uninstall     Supprimer la commande et ${INSTALL_DIR}
 
-Format des listes (une entrée par ligne) :
+Format de rpm.list / flatpak.list (une entrée par ligne) :
   add:paquet      installe le paquet
   del:paquet      supprime le paquet
   paquet          équivalent à add:paquet
   # ...           commentaire (ignoré), lignes vides ignorées
+
+Format de repos.list (dépôts tiers, une ligne par dépôt) :
+  nom | url_cle_gpg | url_du_.repo
+  Le script demande pour chaque dépôt s'il faut l'ajouter (--yes = tout oui).
+  Installez ensuite ses paquets via rpm.list (ex. add:vivaldi-stable).
 
 Une fois installé, lancez simplement :  sudo ${CMD_NAME}
 EOF
@@ -282,6 +307,58 @@ setup_repos() {
     else
         info "Dépôt Flathub déjà configuré"
     fi
+}
+
+#===============================================================================
+# DÉPÔTS TIERS (repos.list) — interactif
+#
+# Pour chaque dépôt décrit dans repos.list, on demande à l'utilisateur s'il
+# faut l'ajouter, puis on importe sa clé GPG et on télécharge son fichier .repo
+# dans /etc/yum.repos.d/. Les paquets eux-mêmes s'installent ensuite via
+# rpm.list (ex. add:vivaldi-stable une fois le dépôt vivaldi ajouté).
+#===============================================================================
+
+install_repos() {
+    section "Dépôts tiers ($(basename "$REPOS_LIST"))"
+
+    if [[ ! -f "$REPOS_LIST" ]]; then
+        info "Aucun fichier $REPOS_LIST : étape ignorée."
+        return
+    fi
+
+    local line name gpgkey repourl repofile
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Ignore commentaires et lignes vides
+        line="${line#"${line%%[![:space:]]*}"}"   # trim gauche
+        [[ -z "$line" || "$line" == \#* ]] && continue
+
+        # Découpe « nom | clé_gpg | url_repo » et supprime les espaces autour
+        IFS='|' read -r name gpgkey repourl <<< "$line"
+        name="$(echo "$name" | xargs)"
+        gpgkey="$(echo "$gpgkey" | xargs)"
+        repourl="$(echo "$repourl" | xargs)"
+
+        if [[ -z "$name" || -z "$gpgkey" || -z "$repourl" ]]; then
+            error "Ligne repos.list mal formée (attendu « nom | clé | url ») : $line"
+            continue
+        fi
+
+        repofile="/etc/yum.repos.d/${name}.repo"
+        if [[ -f "$repofile" ]]; then
+            info "Dépôt « $name » déjà présent ($repofile), ignoré."
+            continue
+        fi
+
+        if ask_yes_no "Ajouter le dépôt « ${C_BLUE}${name}${C_RESET} » ?"; then
+            # Import de la clé GPG puis récupération du fichier .repo directement
+            # dans /etc/yum.repos.d/ : méthode portable, indépendante de la
+            # syntaxe de « dnf config-manager » (différente entre dnf4 et dnf5).
+            run "Import clé GPG $name" rpm --import "$gpgkey"
+            run "Ajout dépôt $name"    curl -fsSL -o "$repofile" "$repourl"
+        else
+            info "Dépôt « $name » ignoré."
+        fi
+    done < "$REPOS_LIST"
 }
 
 #===============================================================================
@@ -505,7 +582,7 @@ install_command() {
     # Copie du projet complet (script + listes + README) vers INSTALL_DIR
     install -d "$INSTALL_DIR"
     install -m 755 "${SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
-    for f in rpm.list flatpak.list README.md; do
+    for f in rpm.list flatpak.list repos.list README.md; do
         # On n'écrase pas une liste déjà personnalisée lors d'une réinstallation
         if [[ -f "${SCRIPT_DIR}/$f" && ! -f "${INSTALL_DIR}/$f" ]]; then
             install -m 644 "${SCRIPT_DIR}/$f" "${INSTALL_DIR}/$f"
@@ -543,10 +620,13 @@ parse_args() {
         case "$1" in
             -r)            RPM_LIST="$(realpath "$2")"; shift 2 ;;
             -f)            FLATPAK_LIST="$(realpath "$2")"; shift 2 ;;
+            -d)            REPOS_LIST="$(realpath "$2")"; shift 2 ;;
             --no-update)   DO_UPDATE=0; shift ;;
             --no-firmware) DO_FIRMWARE=0; shift ;;
             --no-gpu)      DO_GPU=0; shift ;;
+            --no-repos)    DO_REPOS=0; shift ;;
             --no-lists)    DO_LISTS=0; shift ;;
+            -y|--yes)      ASSUME_YES=1; shift ;;
             -q|--quiet)    VERBOSE=0; shift ;;
             --install)     install_command; exit 0 ;;
             --uninstall)   uninstall_command; exit 0 ;;
@@ -569,6 +649,7 @@ main() {
     configure_dnf
     setup_repos
 
+    [[ $DO_REPOS -eq 1 ]]    && install_repos
     [[ $DO_UPDATE -eq 1 ]]   && update_system
     [[ $DO_FIRMWARE -eq 1 ]] && update_firmwares
     [[ $DO_GPU -eq 1 ]]      && setup_gpu
