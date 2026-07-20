@@ -89,7 +89,7 @@ sudo fedora-setup --update
 ```
 
 `--update` installe toujours la **dernière release taggée** (`vX.Y.Z`),
-jamais un commit intermédiaire de `main` : il récupère les tags
+jamais un commit intermédiaire de la branche : il récupère les tags
 (`git fetch --tags`) et bascule sur le plus récent. S'il n'existe encore
 aucun tag sur le dépôt, il se rabat sur un `git pull` classique.
 

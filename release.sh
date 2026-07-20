@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly TARGET_FILE="${SCRIPT_DIR}/fedora-setup.sh"
-readonly DEFAULT_BRANCH="main"
+readonly DEFAULT_BRANCH="master"
 
 usage() {
     cat << EOF

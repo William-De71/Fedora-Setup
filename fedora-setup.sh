@@ -870,8 +870,8 @@ update_command() {
     run "Récupération des tags" git -C "$INSTALL_DIR" fetch --tags --force
 
     # --update suit toujours la dernière release taggée (vX.Y.Z), jamais un
-    # commit intermédiaire de main : --sort=-v:refname trie les tags par
-    # ordre de version sémantique décroissant (tri natif git, pas de parsing).
+    # commit intermédiaire de la branche : --sort=-v:refname trie les tags
+    # par ordre de version sémantique décroissant (tri natif git, pas de parsing).
     local latest_tag
     latest_tag="$(git -C "$INSTALL_DIR" tag --sort=-v:refname | head -n1)"
 
