@@ -795,11 +795,21 @@ install_command() {
     local origin_url
     origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
 
+    # root n'a en général pas accès à la clé SSH de l'utilisateur : on
+    # convertit une URL SSH (git@github.com:user/repo.git) en HTTPS pour que
+    # le clone fonctionne sans authentification (dépôt public).
+    if [[ "$origin_url" =~ ^git@github\.com:(.+)$ ]]; then
+        origin_url="https://github.com/${BASH_REMATCH[1]}"
+    fi
+
     if [[ -n "$origin_url" && ! -d "$INSTALL_DIR/.git" ]]; then
         # Un remote existe et aucune installation git n'est déjà en place :
         # on clone pour pouvoir utiliser --update ensuite.
         rm -rf "$INSTALL_DIR"
-        run "Clonage du dépôt dans ${INSTALL_DIR}" git clone "$origin_url" "$INSTALL_DIR"
+        if ! run "Clonage du dépôt dans ${INSTALL_DIR}" git clone "$origin_url" "$INSTALL_DIR"; then
+            error "Échec du clonage : installation annulée."
+            exit 1
+        fi
     elif [[ -n "$origin_url" && -d "$INSTALL_DIR/.git" ]]; then
         info "Installation git déjà en place dans ${INSTALL_DIR} (utilisez --update pour la synchroniser)."
     else
