@@ -1,0 +1,53 @@
+# =============================================================================
+# Liste des paquets RPM gérés par fedora-setup.sh
+#
+# Syntaxe (une entrée par ligne) :
+#   add:paquet   -> installe le paquet
+#   del:paquet   -> supprime le paquet
+#   paquet       -> équivalent à add:paquet
+#   # ...        -> commentaire (ignoré)
+# =============================================================================
+
+# --- Langue française (si système installé en anglais) ---
+add:aspell-fr
+add:libreoffice-langpack-fr
+
+# --- Outils GNOME ---
+add:gnome-tweaks
+add:file-roller
+add:dconf-editor
+
+# --- CLI : console & système ---
+add:vim-enhanced
+add:htop
+add:fastfetch
+add:inxi
+add:lm_sensors
+add:nvtop
+
+# --- CLI : réseau ---
+add:nmap
+add:traceroute
+add:fuse-sshfs
+
+# --- CLI : divers ---
+add:git
+add:ShellCheck
+add:yt-dlp
+
+# --- GUI : multimédia / graphisme ---
+add:gimp
+add:flameshot
+add:mediainfo-gui
+
+# --- GUI : sécurité ---
+add:keepassxc
+
+# --- Compression ---
+add:p7zip
+add:p7zip-plugins
+add:unrar
+
+# --- Nettoyage ---
+del:gnome-boxes
+del:abrt

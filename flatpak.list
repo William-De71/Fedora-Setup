@@ -1,0 +1,30 @@
+# =============================================================================
+# Liste des paquets Flatpak (Flathub) gérés par fedora-setup.sh
+#
+# Syntaxe (une entrée par ligne) :
+#   add:id.application   -> installe le flatpak
+#   del:id.application   -> supprime le flatpak
+#   id.application       -> équivalent à add:
+#   # ...                -> commentaire (ignoré)
+#
+# Pour trouver l'identifiant d'une application : https://flathub.org
+# ou : flatpak search <nom>
+# =============================================================================
+
+# --- Gestion des flatpaks ---
+add:com.github.tchx84.Flatseal
+
+# --- Développement ---
+add:com.visualstudio.code
+add:com.getpostman.Postman
+add:com.emqx.MQTTX
+
+# --- Internet / communication ---
+add:org.filezillaproject.Filezilla
+add:com.nextcloud.desktopclient.nextcloud
+
+# --- Multimédia ---
+add:com.spotify.Client
+
+# --- Graphisme ---
+add:org.inkscape.Inkscape

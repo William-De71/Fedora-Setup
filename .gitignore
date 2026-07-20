@@ -1,0 +1,3 @@
+# Journaux d'exécution générés par le script
+*.log
+logfile_*
