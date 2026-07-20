@@ -26,6 +26,10 @@ et s'adapte donc à n'importe quel PC (NVIDIA, AMD, Intel, ou hybride).
 Le script est **idempotent** : il peut être relancé sans risque, il ne refait
 que ce qui est nécessaire.
 
+En complément, une option dédiée `--bashrc` (voir plus bas) permet d'installer
+un `~/.bashrc` personnalisé — elle n'est **jamais** exécutée automatiquement,
+uniquement sur demande explicite.
+
 ## Installation en tant que commande système
 
 Pour pouvoir appeler `fedora-setup` depuis **n'importe quel dossier** (au lieu
@@ -131,6 +135,7 @@ sudo fedora-setup
 | `--install` | Installer la commande système `fedora-setup` (voir plus haut) |
 | `--update` | Mettre à jour l'installation système (nécessite un remote git) |
 | `--uninstall` | Désinstaller la commande et `/opt/fedora-setup` |
+| `--bashrc` | Installer `~/.bashrc` depuis `bashrc.example` (voir plus bas) |
 | `-h`, `--help` | Afficher l'aide |
 
 Par défaut, la sortie des commandes est affichée en direct à l'écran (mode
@@ -220,6 +225,26 @@ désinstaller chaque entrée.
 > `sudo` (variable `$SUDO_USER`) et exécute `gext` en son nom, avec son bus
 > D-Bus de session — aucune action manuelle requise, mais le script doit être
 > lancé via `sudo` (pas en root direct) pour que `$SUDO_USER` soit défini.
+
+## Bashrc personnalisé (`--bashrc`)
+
+Le dépôt fournit un gabarit `bashrc.example` (prompt coloré avec branche git,
+config `nvm`, `PATH` personnalisé…). Contrairement au reste du script, il
+**n'est jamais installé automatiquement** : il faut le demander explicitement.
+
+```bash
+sudo fedora-setup --bashrc
+```
+
+Cette commande :
+- installe `bashrc.example` en tant que **`~/.bashrc`** de l'utilisateur réel
+  (`$SUDO_USER`, pas root — mêmes principes que pour les extensions GNOME) ;
+- **sauvegarde l'ancien fichier** en `~/.bashrc.bak` s'il existe et diffère du
+  gabarit, avant de l'écraser.
+
+Comme pour les listes de paquets, seul `bashrc.example` est versionné dans le
+dépôt : votre `~/.bashrc` réel n'est pas suivi par git et peut être modifié
+librement ensuite — `--update` (mise à jour du script) n'y touche jamais.
 
 ## Journal
 

@@ -212,6 +212,10 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   configuré). Ne touche JAMAIS aux listes réelles,
                   seulement au script et aux gabarits *.list.example.
   --uninstall     Supprimer la commande et ${INSTALL_DIR}
+  --bashrc        Installer ~/.bashrc (utilisateur \$SUDO_USER) depuis
+                  bashrc.example, en sauvegardant l'ancien en ~/.bashrc.bak
+                  si présent et différent. N'est jamais exécuté
+                  automatiquement, uniquement sur demande explicite.
 
 Listes réelles vs gabarits :
   Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
@@ -696,6 +700,44 @@ install_gnome_extensions() {
 }
 
 #===============================================================================
+# BASHRC (installation explicite, hors du flux principal)
+#
+# Installe ~/.bashrc de l'utilisateur cible ($SUDO_USER) depuis le gabarit
+# bashrc.example du dépôt, en sauvegardant l'ancien fichier en ~/.bashrc.bak
+# s'il diffère. N'est jamais exécuté automatiquement : uniquement via
+# l'option --bashrc, appelée explicitement.
+#===============================================================================
+
+install_bashrc() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'installation du bashrc nécessite les droits root : sudo ${CMD_NAME} --bashrc"
+        exit 1
+    fi
+
+    local bashrc_example="${SCRIPT_DIR}/bashrc.example"
+
+    if [[ ! -f "$bashrc_example" ]]; then
+        error "Gabarit introuvable : $bashrc_example"
+        exit 1
+    fi
+
+    local user home_dir dest
+    user="$(gnome_user)" || exit 1
+    home_dir="$(getent passwd "$user" | cut -d: -f6)"
+    dest="${home_dir}/.bashrc"
+
+    echo -e "${C_BOLD}Installation de ~/.bashrc pour ${user}${C_RESET}"
+
+    if [[ -f "$dest" ]] && ! cmp -s "$bashrc_example" "$dest"; then
+        run "Sauvegarde de l'ancien .bashrc (${dest}.bak)" \
+            cp -p "$dest" "${dest}.bak"
+    fi
+
+    install -m 644 -o "$user" -g "$user" "$bashrc_example" "$dest"
+    echo -e "    ${C_GREEN}Installé${C_RESET} : ${dest}"
+}
+
+#===============================================================================
 # REDÉMARRAGE
 #===============================================================================
 
@@ -739,7 +781,7 @@ ask_reboot() {
 #===============================================================================
 
 # Fichiers du projet installés tels quels (gabarits *.example + README)
-INSTALL_FILES=(rpm.list.example flatpak.list.example repos.list.example gnome-extensions.list.example README.md)
+INSTALL_FILES=(rpm.list.example flatpak.list.example repos.list.example gnome-extensions.list.example bashrc.example README.md)
 readonly INSTALL_FILES
 
 install_command() {
@@ -858,6 +900,7 @@ parse_args() {
             --install)     install_command; exit 0 ;;
             --update)      update_command; exit 0 ;;
             --uninstall)   uninstall_command; exit 0 ;;
+            --bashrc)      install_bashrc; exit 0 ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac

@@ -1,0 +1,50 @@
+# .bashrc
+
+# Source global definitions
+if [ -f /etc/bashrc ]; then
+    . /etc/bashrc
+fi
+
+# User specific environment
+if ! [[ "$PATH" =~ "$HOME/.local/bin:$HOME/bin:" ]]; then
+    PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+fi
+export PATH
+
+# Uncomment the following line if you don't like systemctl's auto-paging feature:
+# export SYSTEMD_PAGER=
+
+# User specific aliases and functions
+if [ -d ~/.bashrc.d ]; then
+    for rc in ~/.bashrc.d/*; do
+        if [ -f "$rc" ]; then
+            . "$rc"
+        fi
+    done
+fi
+unset rc
+
+PATH=~/.console-ninja/.bin:$PATH
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+# . ~/.git-prompt.sh
+# export GIT_PS1_SHOWDIRTYSTATE=1
+# export GIT_PS1_SHOWCOLORHINTS=2
+# export PS1='\u@\h:\w$(__git_ps1 " (%s)")\$ '
+
+
+# --- Prompt stylé complet ---
+
+# Fonction pour afficher la branche git (si présente)
+parse_git_branch() {
+    git branch 2>/dev/null | sed -n '/\* /s///p'
+}
+
+# Définition du prompt coloré
+PS1="\n\[\e[0;90m\][\t]\[\e[0m\] "                            # heure en gris clair
+PS1+="\[\e[1;32m\]\u\[\e[0;37m\]@\[\e[1;34m\]\h "             # user@host
+PS1+="\[\e[0;33m\]\w"                                          # chemin courant
+PS1+="\[\e[0;35m\]\$(git_branch=\$(parse_git_branch); [ -n \"\$git_branch\" ] && echo \" [ \$git_branch]\")"  # branche git
+PS1+="\n\$(if [ \$? = 0 ]; then echo \"\[\e[1;32m\]❯\"; else echo \"\[\e[1;31m\]❯\"; fi)\[\e[0m\] "
