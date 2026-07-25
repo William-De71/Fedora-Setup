@@ -89,6 +89,11 @@ ASSUME_YES=0       # Répondre « oui » automatiquement (--yes) : aucune questi
 DRY_RUN=0          # Simulation : affiche les commandes sans les exécuter
 DO_SNAPSHOT=0      # Instantané Btrfs avant modification (--snapshot)
 
+# Action autonome demandée (--clean, --memory…) : nom de la fonction à
+# appeler après le parsing, au lieu du traitement principal. Vide = flux
+# normal de post-installation.
+ACTION=""
+
 # Compteurs alimentés par run(), utilisés par le récapitulatif final.
 COUNT_OK=0
 COUNT_FAIL=0
@@ -206,6 +211,35 @@ flatpak_installed() {
 # Vrai si une commande existe dans le PATH
 has_cmd() {
     command -v "$1" &> /dev/null
+}
+
+# Préambule commun aux options autonomes (--clean, --memory, --boot…) :
+# vérifie les droits, la distribution et prépare le journal.
+#   $1 : nom de l'option (pour le message d'erreur)
+#   $2 : titre affiché en en-tête
+#
+# En simulation, l'absence de droits root n'est pas bloquante : aucune
+# commande n'étant exécutée, on veut pouvoir auditer l'option sans sudo.
+require_root_for() {
+    local opt="$1" title="$2"
+
+    if [[ $(id -u) -ne 0 && $DRY_RUN -eq 0 ]]; then
+        error "Cette opération nécessite les droits root : sudo ${CMD_NAME} ${opt}"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — ${title} ===${C_RESET}"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo -e "${C_BLUE}Mode simulation : aucune modification ne sera appliquée.${C_RESET}"
+    fi
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
 }
 
 usage() {
@@ -932,20 +966,7 @@ clean_trim() {
 }
 
 clean_system() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "Le nettoyage nécessite les droits root : sudo ${CMD_NAME} --clean"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — nettoyage & maintenance ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--clean" "nettoyage & maintenance"
 
     local free_before free_after
     free_before=$(df --output=avail -BM / | tail -1 | tr -d ' M')
@@ -1057,20 +1078,7 @@ memory_check_oomd() {
 }
 
 optimize_memory() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'optimisation mémoire nécessite les droits root : sudo ${CMD_NAME} --memory"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — réactivité mémoire ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--memory" "réactivité mémoire"
 
     section "État actuel"
     local ram_total swappiness_now
@@ -1238,20 +1246,7 @@ boot_grub_timeout() {
 }
 
 optimize_boot() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'optimisation du démarrage nécessite les droits root : sudo ${CMD_NAME} --boot"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — optimisation du démarrage ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--boot" "optimisation du démarrage"
 
     section "Temps de démarrage actuel"
     local total
@@ -1461,20 +1456,7 @@ UNIT"
 }
 
 optimize_laptop() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'optimisation portable nécessite les droits root : sudo ${CMD_NAME} --laptop"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — portable & autonomie ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--laptop" "portable & autonomie"
 
     section "Détection du matériel"
     if has_battery; then
@@ -1711,20 +1693,7 @@ RESOLVED"
 }
 
 secure_system() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "Le durcissement nécessite les droits root : sudo ${CMD_NAME} --security"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — sécurité & réseau ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--security" "sécurité & réseau"
 
     section "SELinux"
     security_selinux
@@ -1863,20 +1832,7 @@ devtools_fonts() {
 }
 
 install_devtools() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'installation des outils nécessite les droits root : sudo ${CMD_NAME} --devtools"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — outils de développement ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--devtools" "outils de développement"
 
     section "Conteneurs de développement"
     devtools_containers
@@ -2337,12 +2293,16 @@ parse_args() {
             --uninstall)   uninstall_command; exit 0 ;;
             --bashrc)      install_bashrc; exit 0 ;;
             --docker)      install_docker; exit 0 ;;
-            --clean)       clean_system; exit 0 ;;
-            --memory)      optimize_memory; exit 0 ;;
-            --boot)        optimize_boot; exit 0 ;;
-            --laptop)      optimize_laptop; exit 0 ;;
-            --security)    secure_system; exit 0 ;;
-            --devtools)    install_devtools; exit 0 ;;
+            # Ces actions sont mémorisées et non exécutées ici : le reste de
+            # la ligne de commande doit d'abord être lu, faute de quoi un
+            # « --clean --dry-run » lancerait le nettoyage pour de vrai,
+            # DRY_RUN n'étant pas encore positionné.
+            --clean)       ACTION="clean_system"; shift ;;
+            --memory)      ACTION="optimize_memory"; shift ;;
+            --boot)        ACTION="optimize_boot"; shift ;;
+            --laptop)      ACTION="optimize_laptop"; shift ;;
+            --security)    ACTION="secure_system"; shift ;;
+            --devtools)    ACTION="install_devtools"; shift ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac
@@ -2359,6 +2319,15 @@ main() {
     # Installé après parse_args : --help et --version doivent pouvoir sortir
     # sans déclencher le récapitulatif.
     trap on_interrupt INT TERM
+
+    # Action autonome (--clean, --memory, --boot…) : elle remplace le flux
+    # de post-installation et bénéficie du récapitulatif comme lui.
+    if [[ -n "$ACTION" ]]; then
+        "$ACTION"
+        summary
+        [[ $COUNT_FAIL -eq 0 ]]
+        return
+    fi
 
     echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — post-installation & maintenance ===${C_RESET}"
 
