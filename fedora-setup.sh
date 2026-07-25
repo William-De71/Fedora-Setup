@@ -45,7 +45,15 @@ set -u -o pipefail
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
-LOG_FILE="/var/log/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
+
+# /var/log n'est accessible en écriture qu'à root. Le script s'exécute
+# normalement via sudo, mais --dry-run est utilisable sans privilèges (pour
+# auditer ce qui serait fait) : dans ce cas le journal va dans /tmp.
+if [[ $(id -u) -eq 0 ]]; then
+    LOG_FILE="/var/log/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
+else
+    LOG_FILE="${TMPDIR:-/tmp}/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
+fi
 readonly SCRIPT_PATH SCRIPT_DIR SCRIPT_NAME LOG_FILE
 
 # Version du script (affichée par -v/--version et au démarrage)
@@ -77,6 +85,14 @@ DO_LISTS=1         # Traitement des listes rpm.list / flatpak.list
 DO_GNOME_EXT=1     # Traitement de la liste gnome-extensions.list
 VERBOSE=1          # Affiche la sortie des commandes au lieu du seul log
 ASSUME_YES=0       # Répondre « oui » automatiquement (--yes) : aucune question
+DRY_RUN=0          # Simulation : affiche les commandes sans les exécuter
+DO_SNAPSHOT=0      # Instantané Btrfs avant modification (--snapshot)
+
+# Compteurs alimentés par run(), utilisés par le récapitulatif final.
+COUNT_OK=0
+COUNT_FAIL=0
+COUNT_SKIPPED=0
+FAILED_ACTIONS=()
 
 # Renseigné par gpu_detect() : chaîne lspci des contrôleurs graphiques
 GPU_INFO=""
@@ -120,9 +136,20 @@ error() {
 #   $1 : libellé lisible de l'action
 #   $@ : la commande et ses arguments
 # Retourne le code de la commande (permet un traitement en aval si besoin).
+#
+# En mode simulation (--dry-run), la commande est affichée et journalisée
+# mais jamais exécutée, et le résultat est compté comme « simulé ».
 run() {
     local label="$1"; shift
     local rc
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo -e "    ${label} : ${C_BLUE}simulé${C_RESET}"
+        echo -e "        ${C_BOLD}\$${C_RESET} $*"
+        log "DRY-RUN: $*"
+        COUNT_SKIPPED=$((COUNT_SKIPPED + 1))
+        return 0
+    fi
 
     echo -ne "    ${label} : "
     log "CMD: $*"
@@ -139,8 +166,14 @@ run() {
 
     if [[ $rc -eq 0 ]]; then
         echo -e "${C_GREEN}OK${C_RESET}"
+        COUNT_OK=$((COUNT_OK + 1))
     else
         echo -e "${C_RED}ERREUR${C_RESET} (voir $LOG_FILE)"
+        COUNT_FAIL=$((COUNT_FAIL + 1))
+        # Mémorisé pour le récapitulatif final : sans cela, une erreur
+        # survenue en début de traitement disparaît sous des centaines de
+        # lignes de sortie dnf.
+        FAILED_ACTIONS+=("$label")
     fi
     return "$rc"
 }
@@ -195,6 +228,11 @@ Options :
   --no-gnome-ext  Ne pas traiter la liste gnome-extensions.list
   -y, --yes       Répondre « oui » à toutes les questions (non interactif)
   -q, --quiet     Affichage compact (OK/ERREUR), détails uniquement dans le log
+  -n, --dry-run   Simulation : affiche les commandes sans rien exécuter.
+                  Utilisable sans sudo, pour auditer ce que ferait le script.
+  --snapshot      Créer un instantané Btrfs de / avant toute modification
+                  (filet de sécurité en cas de mise à jour ratée ; sans
+                  effet si la racine n'est pas en Btrfs)
   -v, --version   Afficher la version du script
   -h, --help      Afficher cette aide
 
@@ -258,6 +296,10 @@ ensure_lists_from_examples() {
     for dest in "$RPM_LIST" "$FLATPAK_LIST" "$REPOS_LIST" "$GNOME_EXT_LIST"; do
         example="${dest}.example"
         if [[ ! -f "$dest" && -f "$example" ]]; then
+            if [[ $DRY_RUN -eq 1 ]]; then
+                info "${C_BLUE}simulé${C_RESET} : créerait $(basename "$dest") depuis $(basename "$example")"
+                continue
+            fi
             install -m 644 "$example" "$dest"
             info "Créé $(basename "$dest") depuis $(basename "$example")"
         fi
@@ -266,10 +308,18 @@ ensure_lists_from_examples() {
 
 checks() {
     # Le script doit être lancé en root (via sudo) : dnf, fwupd et les
-    # installations flatpak --system l'exigent.
+    # installations flatpak --system l'exigent. En simulation, aucune de ces
+    # commandes n'est exécutée : on autorise donc l'exécution sans sudo,
+    # précisément pour permettre d'auditer le script avant de lui confier
+    # les droits root.
     if [[ $(id -u) -ne 0 ]]; then
-        error "Ce script doit être lancé avec les droits root : sudo ./${SCRIPT_NAME}"
-        exit 1
+        if [[ $DRY_RUN -eq 0 ]]; then
+            error "Ce script doit être lancé avec les droits root : sudo ./${SCRIPT_NAME}"
+            exit 1
+        fi
+        info "${C_YELLOW}Simulation sans droits root : certains états (paquets${C_RESET}"
+        info "${C_YELLOW}installés, services) restent lisibles, mais l'exécution${C_RESET}"
+        info "${C_YELLOW}réelle nécessitera sudo.${C_RESET}"
     fi
 
     # On ne cible que Fedora (le script utilise dnf, rpmfusion, etc.)
@@ -286,8 +336,10 @@ checks() {
         exit 1
     fi
 
-    # Les fichiers de listes doivent exister si on doit les traiter
-    if [[ $DO_LISTS -eq 1 ]]; then
+    # Les fichiers de listes doivent exister si on doit les traiter.
+    # En simulation, leur création a seulement été annoncée : exiger leur
+    # présence ferait échouer un dry-run lancé sur une copie fraîche du dépôt.
+    if [[ $DO_LISTS -eq 1 && $DRY_RUN -eq 0 ]]; then
         for f in "$RPM_LIST" "$FLATPAK_LIST"; do
             if [[ ! -f "$f" ]]; then
                 error "Fichier de liste introuvable : $f"
@@ -551,6 +603,19 @@ process_list() {
     local file="$1" type="$2"
     local line action pkg
 
+    # En simulation, le fichier de liste peut n'avoir été que « créé »
+    # symboliquement : on se rabat alors sur le gabarit correspondant pour
+    # montrer malgré tout ce qui serait installé.
+    if [[ ! -f "$file" ]]; then
+        if [[ $DRY_RUN -eq 1 && -f "${file}.example" ]]; then
+            info "${C_BLUE}simulé${C_RESET} : lecture de $(basename "${file}.example")"
+            file="${file}.example"
+        else
+            info "Fichier introuvable : $file — étape ignorée."
+            return 0
+        fi
+    fi
+
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Nettoyage : espaces autour, commentaires, lignes vides
         line="${line#"${line%%[![:space:]]*}"}"   # trim gauche
@@ -736,6 +801,97 @@ install_bashrc() {
 
     install -m 644 -o "$user" -g "$user" "$bashrc_example" "$dest"
     echo -e "    ${C_GREEN}Installé${C_RESET} : ${dest}"
+}
+
+#===============================================================================
+# INSTANTANÉ BTRFS (--snapshot)
+#
+# Sur un système de fichiers Btrfs, un instantané se crée en une fraction de
+# seconde et n'occupe initialement aucun espace (copie sur écriture) : c'est
+# un filet de sécurité peu coûteux avant une mise à jour massive ou un
+# changement de pilote graphique.
+#
+# L'instantané est en lecture seule et rangé dans /.snapshots. Il ne
+# remplace pas une sauvegarde : il vit sur le même disque et disparaît avec
+# lui. C'est une protection contre une mise à jour ratée, pas contre une
+# panne matérielle.
+#===============================================================================
+
+readonly SNAPSHOT_DIR="/.snapshots"
+
+# Vrai si la racine est un système de fichiers Btrfs.
+root_is_btrfs() {
+    [[ "$(findmnt -no FSTYPE / 2>/dev/null)" == "btrfs" ]]
+}
+
+# Crée un instantané en lecture seule de la racine, horodaté.
+create_snapshot() {
+    if ! root_is_btrfs; then
+        info "${C_YELLOW}La racine n'est pas en Btrfs : instantané impossible.${C_RESET}"
+        info "${C_YELLOW}(Sur ext4/xfs, utilisez plutôt une sauvegarde classique.)${C_RESET}"
+        return 0
+    fi
+
+    if ! has_cmd btrfs; then
+        info "Commande btrfs introuvable : instantané ignoré."
+        return 0
+    fi
+
+    local name="${SNAPSHOT_DIR}/root_$(date '+%Y%m%d-%H%M%S')"
+
+    if [[ ! -d "$SNAPSHOT_DIR" ]]; then
+        run "Création du dossier ${SNAPSHOT_DIR}" \
+            btrfs subvolume create "$SNAPSHOT_DIR"
+    fi
+
+    if run "Instantané Btrfs de /" btrfs subvolume snapshot -r / "$name"; then
+        info "Instantané : ${C_GREEN}${name}${C_RESET}"
+        info "Lister : ${C_YELLOW}sudo btrfs subvolume list /${C_RESET}"
+        info "Supprimer : ${C_YELLOW}sudo btrfs subvolume delete ${name}${C_RESET}"
+        info "${C_YELLOW}Note : un instantané n'est pas une sauvegarde (même disque).${C_RESET}"
+    fi
+}
+
+#===============================================================================
+# RÉCAPITULATIF ET INTERRUPTIONS
+#
+# Le script enchaîne des centaines de commandes dont la sortie défile : sans
+# récapitulatif, une erreur survenue tôt passe inaperçue. summary() est
+# appelée aussi bien en fin normale que sur interruption (Ctrl-C), afin que
+# l'utilisateur sache toujours ce qui a réellement été fait.
+#===============================================================================
+
+summary() {
+    section "Récapitulatif"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "Mode simulation : ${C_BLUE}${COUNT_SKIPPED}${C_RESET} commande(s) affichée(s), aucune exécutée."
+        info "Relancez sans --dry-run pour appliquer réellement les changements."
+        return
+    fi
+
+    info "Réussites : ${C_GREEN}${COUNT_OK}${C_RESET}"
+
+    if [[ $COUNT_FAIL -eq 0 ]]; then
+        info "Échecs    : ${C_GREEN}0${C_RESET}"
+    else
+        info "Échecs    : ${C_RED}${COUNT_FAIL}${C_RESET}"
+        local action
+        for action in "${FAILED_ACTIONS[@]}"; do
+            info "  ${C_RED}✗${C_RESET} ${action}"
+        done
+        info "Détail complet : ${C_YELLOW}${LOG_FILE}${C_RESET}"
+    fi
+}
+
+# Interruption (Ctrl-C) : on affiche ce qui a été fait avant de quitter,
+# plutôt que de laisser l'utilisateur devant un terminal muet.
+on_interrupt() {
+    echo ""
+    error "Interruption demandée (Ctrl-C)."
+    log "Script interrompu par l'utilisateur"
+    summary
+    exit 130
 }
 
 #===============================================================================
@@ -930,6 +1086,8 @@ parse_args() {
             --no-gnome-ext) DO_GNOME_EXT=0; shift ;;
             -y|--yes)      ASSUME_YES=1; shift ;;
             -q|--quiet)    VERBOSE=0; shift ;;
+            -n|--dry-run)  DRY_RUN=1; shift ;;
+            --snapshot)    DO_SNAPSHOT=1; shift ;;
             -v|--version)  echo "$VERSION"; exit 0 ;;
             --install)     install_command; exit 0 ;;
             --update)      update_command; exit 0 ;;
@@ -948,8 +1106,19 @@ parse_args() {
 main() {
     parse_args "$@"
 
+    # Installé après parse_args : --help et --version doivent pouvoir sortir
+    # sans déclencher le récapitulatif.
+    trap on_interrupt INT TERM
+
     echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — post-installation & maintenance ===${C_RESET}"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo -e "${C_BLUE}Mode simulation : aucune modification ne sera appliquée.${C_RESET}"
+    fi
+
     checks
+
+    [[ $DO_SNAPSHOT -eq 1 ]] && { section "Instantané Btrfs"; create_snapshot; }
 
     configure_dnf
     setup_repos
@@ -964,7 +1133,14 @@ main() {
     [[ $DO_LISTS -eq 1 ]]    && install_lists
     [[ $DO_GNOME_EXT -eq 1 ]] && install_gnome_extensions
 
-    ask_reboot
+    summary
+
+    # En simulation, proposer un redémarrage n'aurait aucun sens.
+    [[ $DRY_RUN -eq 0 ]] && ask_reboot
+
+    # Code de sortie non nul si au moins une action a échoué : permet
+    # d'enchaîner le script dans une automatisation.
+    [[ $COUNT_FAIL -eq 0 ]]
 }
 
 main "$@"
