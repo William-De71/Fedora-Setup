@@ -231,6 +231,49 @@ Nettoyage & maintenance :
                   du SSD. Affiche l'espace récupéré. N'est jamais exécuté
                   automatiquement.
 
+Réactivité du système :
+  --memory        Adapter les réglages mémoire du noyau au swap zram de
+                  Fedora : vm.swappiness=180 (au lieu de 60, pensé pour un
+                  swap sur disque), cache de métadonnées conservé plus
+                  longtemps, écritures en attente bornées pour éviter les
+                  à-coups d'E/S. Vérifie aussi systemd-oomd. Écrit dans
+                  ${SYSCTL_CONF}. N'est jamais exécuté automatiquement.
+
+Optimisation du démarrage :
+  --boot          Analyser le temps de démarrage et proposer, une par une,
+                  les désactivations utiles : NetworkManager-wait-online
+                  (plusieurs secondes perdues sur un poste de bureau), cups
+                  si aucune imprimante n'est configurée, bluetooth si aucun
+                  contrôleur n'est présent, et réduction du délai du menu
+                  GRUB. Les services sont désactivés, pas masqués : un
+                  « systemctl enable » suffit à revenir en arrière.
+                  N'est jamais exécuté automatiquement.
+
+Portable / autonomie :
+  --laptop        Optimiser l'autonomie : choix du gestionnaire d'énergie
+                  (TLP ou power-profiles-daemon — jamais les deux, ils se
+                  contredisent), thermald sur processeur Intel, et réglages
+                  powertop optionnels. Détecte la batterie et demande
+                  confirmation sur un poste fixe. N'est jamais exécuté
+                  automatiquement.
+
+Sécurité & réseau :
+  --security      Vérifier et renforcer les protections de base : état de
+                  SELinux, pare-feu firewalld et zone appliquée, mises à
+                  jour de sécurité automatiques (téléchargement et
+                  notification, jamais d'installation silencieuse) et
+                  DNS-over-TLS. Constate et propose, ne durcit jamais sans
+                  confirmation. N'est jamais exécuté automatiquement.
+
+Outils de développement :
+  --devtools      Proposer, un par un : distrobox (conteneurs de
+                  développement jetables, toutes distributions), la
+                  virtualisation KVM/libvirt/virt-manager (vérifie le
+                  support VT-x/AMD-V et ajoute l'utilisateur au groupe
+                  libvirt) et des polices libres (Liberation, Noto,
+                  Fira Code, JetBrains Mono).
+                  N'est jamais exécuté automatiquement.
+
 Listes réelles vs gabarits :
   Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
   flatpak.list.example, repos.list.example, gnome-extensions.list.example).
@@ -867,6 +910,925 @@ clean_system() {
 }
 
 #===============================================================================
+# RÉACTIVITÉ MÉMOIRE (--memory)
+#
+# Fedora active zram par défaut (swap compressé en RAM), mais conserve les
+# valeurs sysctl pensées pour un swap sur disque. Or les deux n'ont rien à
+# voir : swapper vers zram coûte un cycle CPU de compression, pas une
+# entrée-sortie disque. Avec les réglages par défaut, le noyau évite un swap
+# devenu bon marché et préfère jeter du cache de pages, ce qui dégrade la
+# réactivité au lieu de l'améliorer.
+#
+# Réglages appliqués (drop-in sysctl, jamais /etc/sysctl.conf) :
+#   vm.swappiness=180        valeur recommandée avec zram (défaut 60, max 200)
+#   vm.vfs_cache_pressure=50 conserve plus longtemps les métadonnées de
+#                            fichiers (inodes/dentries) : navigation plus vive
+#   vm.dirty_bytes           borne les écritures en attente pour éviter les
+#   vm.dirty_background_bytes  à-coups d'E/S lors des grosses copies
+#   vm.page-cluster=0        zram lit page par page : la lecture anticipée
+#                            par grappes de 8 pages n'apporte rien ici
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --memory.
+#===============================================================================
+
+readonly SYSCTL_CONF="/etc/sysctl.d/99-fedora-setup-memory.conf"
+
+# Vrai si un périphérique zram est actif comme swap.
+zram_active() {
+    swapon --show=NAME --noheadings 2>/dev/null | grep -q '^/dev/zram'
+}
+
+# Écrit le drop-in sysctl et l'applique immédiatement (sans redémarrage).
+memory_apply_sysctl() {
+    if [[ -f "$SYSCTL_CONF" ]]; then
+        info "Réglages déjà présents ($SYSCTL_CONF)"
+        info "Supprimez ce fichier pour les régénérer."
+        return 0
+    fi
+
+    # dirty_bytes remplace dirty_ratio (exprimé en % de la RAM) : sur une
+    # machine bien dotée, 20 % de RAM en écritures sales représente plusieurs
+    # gigaoctets vidés d'un coup sur le disque, d'où des gels perceptibles.
+    run "Écriture des réglages mémoire ($SYSCTL_CONF)" \
+        bash -c "cat > '$SYSCTL_CONF' <<'SYSCTL'
+# Généré par fedora-setup --memory
+# Réactivité mémoire adaptée à un swap zram (compressé, en RAM).
+
+# Swapper vers zram est peu coûteux : on le privilégie au lieu de sacrifier
+# le cache de pages (60 = valeur pensée pour un swap sur disque).
+vm.swappiness=180
+
+# Garder plus longtemps inodes et dentries en cache.
+vm.vfs_cache_pressure=50
+
+# Borner les écritures en attente : évite les à-coups sur grosses copies.
+vm.dirty_bytes=268435456
+vm.dirty_background_bytes=67108864
+
+# zram se lit page par page : pas de lecture anticipée par grappes.
+vm.page-cluster=0
+SYSCTL"
+
+    run "Application immédiate des réglages" sysctl -q -p "$SYSCTL_CONF"
+}
+
+# systemd-oomd tue proprement le processus fautif avant que la machine ne se
+# fige. Sans lui, une saturation mémoire rend le bureau inutilisable pendant
+# de longues minutes (thrashing) au lieu de perdre une seule application.
+memory_check_oomd() {
+    if systemctl is-active --quiet systemd-oomd; then
+        info "systemd-oomd actif (protection contre les gels mémoire)"
+        return 0
+    fi
+
+    info "${C_YELLOW}systemd-oomd est inactif : en cas de saturation mémoire,${C_RESET}"
+    info "${C_YELLOW}le bureau peut se figer durablement.${C_RESET}"
+
+    if ask_yes_no "Activer systemd-oomd ?"; then
+        run "Activation de systemd-oomd" systemctl enable --now systemd-oomd
+    else
+        info "systemd-oomd laissé inactif."
+    fi
+}
+
+optimize_memory() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'optimisation mémoire nécessite les droits root : sudo ${CMD_NAME} --memory"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — réactivité mémoire ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "État actuel"
+    local ram_total swappiness_now
+    ram_total="$(free -h | awk '/^Mem:/ {print $2}')"
+    swappiness_now="$(cat /proc/sys/vm/swappiness)"
+    info "RAM totale       : ${ram_total}"
+    info "vm.swappiness    : ${swappiness_now}"
+
+    if zram_active; then
+        local zram_size
+        zram_size="$(swapon --show=NAME,SIZE --noheadings | awk '/zram/ {print $2}')"
+        info "Swap zram        : ${C_GREEN}actif${C_RESET} (${zram_size})"
+    else
+        info "Swap zram        : ${C_YELLOW}inactif${C_RESET}"
+        info "${C_YELLOW}Les réglages ci-dessous visent un swap zram. Sans zram,${C_RESET}"
+        info "${C_YELLOW}un swappiness élevé solliciterait fortement le disque.${C_RESET}"
+        if ! ask_yes_no "Appliquer quand même les réglages ?"; then
+            info "Optimisation mémoire annulée."
+            return 0
+        fi
+    fi
+
+    section "Réglages du noyau"
+    memory_apply_sysctl
+
+    section "Protection contre les saturations mémoire"
+    memory_check_oomd
+
+    section "Bilan"
+    info "vm.swappiness    : ${swappiness_now} -> ${C_GREEN}$(cat /proc/sys/vm/swappiness)${C_RESET}"
+    info "Réglages persistants dans ${SYSCTL_CONF}"
+}
+
+#===============================================================================
+#===============================================================================
+# DÉMARRAGE (--boot)
+#
+# Analyse le temps de démarrage et propose de désactiver les services qui le
+# ralentissent sans contrepartie. Chaque désactivation est demandée
+# individuellement et n'est proposée que si le matériel ou l'usage réel le
+# permet : une imprimante configurée empêche de proposer cups, une puce
+# Bluetooth présente empêche de proposer bluetooth. On ne masque jamais un
+# service dont dépend l'usage courant de la machine.
+#
+# Les services sont « disabled », pas « masked » : un simple
+# « systemctl enable » suffit à revenir en arrière.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --boot.
+#===============================================================================
+
+# Propose de désactiver un service, en expliquant ce qu'on y gagne et perd.
+#   $1 : nom de l'unité
+#   $2 : ce que la désactivation implique (affiché à l'utilisateur)
+boot_offer_disable() {
+    local unit="$1" consequence="$2"
+
+    if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+        info "${unit} : déjà désactivé"
+        return 0
+    fi
+
+    info "${C_YELLOW}${unit}${C_RESET} — ${consequence}"
+    if ask_yes_no "Désactiver ${unit} ?"; then
+        run "Désactivation de ${unit}" systemctl disable "$unit"
+        info "Réactivation possible : ${C_YELLOW}sudo systemctl enable ${unit}${C_RESET}"
+    else
+        info "${unit} conservé."
+    fi
+}
+
+# NetworkManager-wait-online retarde graphical.target jusqu'à ce que le
+# réseau soit joignable. Utile sur un serveur dont les services montent des
+# partages réseau au démarrage, inutile sur un poste de bureau où les
+# applications gèrent elles-mêmes l'absence de réseau.
+boot_network_wait() {
+    local delay
+    delay="$(systemd-analyze blame 2>/dev/null \
+        | awk '/NetworkManager-wait-online/ {print $1; exit}')"
+
+    if [[ -z "$delay" ]]; then
+        info "NetworkManager-wait-online : non mesuré (déjà désactivé ?)"
+        return 0
+    fi
+
+    boot_offer_disable "NetworkManager-wait-online.service" \
+        "retarde le démarrage de ${C_BOLD}${delay}${C_RESET} en attendant le réseau ; inutile sur un poste de bureau"
+}
+
+# cups n'est proposé à la désactivation que si AUCUNE imprimante n'est
+# configurée : sur une machine qui imprime, le désactiver casse l'impression.
+boot_cups() {
+    if ! pkg_installed cups; then
+        return 0
+    fi
+
+    local printers
+    printers="$(lpstat -p 2>/dev/null | grep -c '^printer' || true)"
+
+    if [[ "${printers:-0}" -gt 0 ]]; then
+        info "cups : ${printers} imprimante(s) configurée(s) — conservé"
+        return 0
+    fi
+
+    boot_offer_disable "cups.service" \
+        "service d'impression, aucune imprimante configurée sur cette machine"
+}
+
+# bluetooth n'est proposé que si la machine n'a aucun contrôleur Bluetooth.
+boot_bluetooth() {
+    if ! pkg_installed bluez; then
+        return 0
+    fi
+
+    # rfkill liste les contrôleurs réellement présents (intégrés ou USB).
+    if rfkill list bluetooth 2>/dev/null | grep -q .; then
+        info "bluetooth : contrôleur présent — conservé"
+        return 0
+    fi
+
+    boot_offer_disable "bluetooth.service" \
+        "aucun contrôleur Bluetooth détecté sur cette machine"
+}
+
+# Le menu GRUB attend par défaut avant de démarrer. Sur une machine à système
+# unique, ce délai est du temps perdu à chaque allumage. On descend à 1 s
+# plutôt que 0 : à 0 le menu devient inatteignable, ce qui complique
+# sérieusement le démarrage sur un noyau antérieur en cas de problème.
+boot_grub_timeout() {
+    local grub_default="/etc/default/grub"
+    local current
+
+    if [[ ! -f "$grub_default" ]]; then
+        info "Fichier $grub_default introuvable : étape ignorée."
+        return 0
+    fi
+
+    current="$(grep -oP '^GRUB_TIMEOUT=\K.*' "$grub_default" 2>/dev/null || echo "?")"
+    info "Délai actuel du menu GRUB : ${current}s"
+
+    if [[ "$current" == "1" || "$current" == "0" ]]; then
+        info "Délai déjà minimal — inchangé"
+        return 0
+    fi
+
+    if ! ask_yes_no "Réduire le délai du menu GRUB à 1 seconde ?"; then
+        info "Délai GRUB inchangé."
+        return 0
+    fi
+
+    run "Sauvegarde de ${grub_default}.bak" cp -p "$grub_default" "${grub_default}.bak"
+    run "Passage de GRUB_TIMEOUT à 1" \
+        sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' "$grub_default"
+
+    # grub2-mkconfig régénère la configuration effective à partir du fichier
+    # ci-dessus. Depuis Fedora 34, grub.cfg est dans /boot/grub2 même en UEFI
+    # (/boot/efi/EFI/fedora/grub.cfg n'est plus qu'un fichier de redirection).
+    local grub_cfg="/boot/grub2/grub.cfg"
+    if [[ ! -f "$grub_cfg" ]]; then
+        info "${C_YELLOW}grub.cfg introuvable ($grub_cfg) : régénération ignorée.${C_RESET}"
+        info "${C_YELLOW}GRUB_TIMEOUT est modifié, appliquez-le manuellement si besoin.${C_RESET}"
+        return 0
+    fi
+
+    run "Régénération de la configuration GRUB" grub2-mkconfig -o "$grub_cfg"
+}
+
+optimize_boot() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'optimisation du démarrage nécessite les droits root : sudo ${CMD_NAME} --boot"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — optimisation du démarrage ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "Temps de démarrage actuel"
+    local total
+    total="$(systemd-analyze 2>/dev/null | head -1)"
+    info "${total:-mesure indisponible}"
+
+    section "Services les plus lents"
+    # Les unités .device et .mount reflètent la détection matérielle, pas des
+    # services désactivables : on ne montre que ce sur quoi on peut agir.
+    local slow
+    slow="$(systemd-analyze blame 2>/dev/null \
+        | grep -E '\.service$' | grep -v 'akmods' | head -8)"
+    if [[ -n "$slow" ]]; then
+        while IFS= read -r line; do
+            info "  ${line}"
+        done <<< "$slow"
+    else
+        info "Mesure indisponible."
+    fi
+
+    section "Services ralentissant le démarrage"
+    boot_network_wait
+    boot_cups
+    boot_bluetooth
+
+    section "Menu de démarrage (GRUB)"
+    boot_grub_timeout
+
+    section "Bilan"
+    info "Les gains seront visibles au ${C_BOLD}prochain démarrage${C_RESET}."
+    info "Comparer ensuite avec : ${C_YELLOW}systemd-analyze${C_RESET}"
+}
+
+#===============================================================================
+#===============================================================================
+# PORTABLE / BATTERIE (--laptop)
+#
+# Optimisations d'autonomie réservées aux machines sur batterie. Sur un poste
+# fixe elles n'apportent rien et peuvent brider les performances : le script
+# détecte donc la présence d'une batterie et refuse de s'exécuter sans elle
+# (sauf confirmation explicite).
+#
+# TLP vs power-profiles-daemon : les deux pilotent les mêmes réglages du
+# noyau et se contredisent s'ils tournent ensemble. Fedora installe PPD par
+# défaut (intégré au sélecteur de profil de GNOME) ; TLP est plus agressif et
+# plus configurable, mais son installation impose de neutraliser PPD. Le
+# script explique le compromis et laisse le choix, sans jamais installer les
+# deux.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --laptop.
+#===============================================================================
+
+# Vrai si la machine possède une batterie (donc : portable).
+has_battery() {
+    local bat
+    for bat in /sys/class/power_supply/BAT*; do
+        [[ -e "$bat" ]] && return 0
+    done
+    return 1
+}
+
+# Vrai si le processeur est un Intel (thermald ne concerne qu'eux).
+cpu_is_intel() {
+    grep -qi 'GenuineIntel' /proc/cpuinfo
+}
+
+# Installe TLP en neutralisant power-profiles-daemon, ou conserve PPD.
+# Les deux services pilotent les mêmes registres : les faire cohabiter
+# produit des réglages incohérents et des retours en arrière permanents.
+laptop_power_manager() {
+    local ppd_installed=1 tlp_installed=1
+    pkg_installed power-profiles-daemon || ppd_installed=0
+    pkg_installed tlp || tlp_installed=0
+
+    if [[ $tlp_installed -eq 1 ]]; then
+        info "TLP est déjà installé"
+        if [[ $ppd_installed -eq 1 ]]; then
+            info "${C_YELLOW}power-profiles-daemon est également présent :${C_RESET}"
+            info "${C_YELLOW}les deux se contredisent, il faut en neutraliser un.${C_RESET}"
+            if ask_yes_no "Masquer power-profiles-daemon au profit de TLP ?"; then
+                run "Masquage de power-profiles-daemon" \
+                    systemctl mask --now power-profiles-daemon
+            fi
+        fi
+        run "Activation de TLP" systemctl enable --now tlp
+        return 0
+    fi
+
+    info "Gestionnaire d'énergie :"
+    info "  ${C_BOLD}power-profiles-daemon${C_RESET} — intégré à GNOME (sélecteur de"
+    info "     profil dans le menu système), réglages prudents, aucun paramétrage."
+    info "  ${C_BOLD}TLP${C_RESET} — plus agressif sur l'autonomie, largement configurable,"
+    info "     mais remplace le sélecteur de profil de GNOME."
+
+    if [[ $ppd_installed -eq 1 ]]; then
+        info "Actuellement : ${C_GREEN}power-profiles-daemon${C_RESET}"
+    else
+        info "Actuellement : ${C_YELLOW}aucun gestionnaire installé${C_RESET}"
+    fi
+
+    if ! ask_yes_no "Installer TLP à la place ?"; then
+        if [[ $ppd_installed -eq 0 ]]; then
+            if ask_yes_no "Installer power-profiles-daemon ?"; then
+                run "Installation de power-profiles-daemon" \
+                    dnf install -y power-profiles-daemon
+                run "Activation de power-profiles-daemon" \
+                    systemctl enable --now power-profiles-daemon
+            fi
+        else
+            info "power-profiles-daemon conservé."
+        fi
+        return 0
+    fi
+
+    # tlp-rdw gère la radio (Wi-Fi/Bluetooth) selon la connexion filaire.
+    run "Installation de TLP" dnf install -y tlp tlp-rdw
+
+    if [[ $ppd_installed -eq 1 ]]; then
+        run "Masquage de power-profiles-daemon (conflit avec TLP)" \
+            systemctl mask --now power-profiles-daemon
+    fi
+
+    run "Activation de TLP" systemctl enable --now tlp
+    info "Configuration : ${C_YELLOW}/etc/tlp.conf${C_RESET} — état : ${C_YELLOW}sudo tlp-stat -s${C_RESET}"
+}
+
+# thermald pilote la gestion thermique des processeurs Intel. Sans lui, le
+# noyau ne réagit qu'aux seuils matériels, plus brutaux (throttling tardif).
+laptop_thermald() {
+    if ! cpu_is_intel; then
+        info "Processeur non-Intel : thermald sans objet."
+        return 0
+    fi
+
+    if ! pkg_installed thermald; then
+        if ! ask_yes_no "Installer thermald (gestion thermique Intel) ?"; then
+            info "thermald ignoré."
+            return 0
+        fi
+        run "Installation de thermald" dnf install -y thermald
+    fi
+
+    if systemctl is-active --quiet thermald; then
+        info "thermald actif"
+    else
+        run "Activation de thermald" systemctl enable --now thermald
+    fi
+}
+
+# powertop --auto-tune applique les réglages d'économie recommandés. Ils sont
+# perdus au redémarrage : on propose une unité systemd pour les réappliquer.
+# Attention : l'auto-tune active l'économie d'énergie sur les ports USB, ce
+# qui peut faire « décrocher » certains périphériques (souris, claviers,
+# webcams). D'où le caractère explicitement optionnel et réversible.
+readonly POWERTOP_UNIT="/etc/systemd/system/powertop-autotune.service"
+
+laptop_powertop() {
+    if ! pkg_installed powertop; then
+        if ! ask_yes_no "Installer powertop (analyse et réglages d'économie) ?"; then
+            info "powertop ignoré."
+            return 0
+        fi
+        run "Installation de powertop" dnf install -y powertop
+    fi
+
+    if [[ -f "$POWERTOP_UNIT" ]]; then
+        info "Unité powertop-autotune déjà en place"
+        return 0
+    fi
+
+    info "${C_YELLOW}L'auto-tune active l'économie d'énergie sur les ports USB :${C_RESET}"
+    info "${C_YELLOW}certaines souris ou webcams peuvent se déconnecter par moments.${C_RESET}"
+
+    if ! ask_yes_no "Appliquer powertop --auto-tune à chaque démarrage ?"; then
+        info "Auto-tune non configuré (powertop reste utilisable manuellement)."
+        return 0
+    fi
+
+    # Chemin résolu depuis le paquet plutôt que codé en dur : systemd exige un
+    # ExecStart absolu et refuse de démarrer l'unité si le chemin est faux.
+    local powertop_bin
+    powertop_bin="$(command -v powertop || rpm -ql powertop | grep -m1 'bin/powertop$')"
+    if [[ -z "$powertop_bin" ]]; then
+        error "Binaire powertop introuvable : unité non créée."
+        return 1
+    fi
+
+    run "Création de l'unité powertop-autotune" \
+        bash -c "cat > '$POWERTOP_UNIT' <<UNIT
+[Unit]
+Description=Réglages d'économie d'énergie powertop (fedora-setup)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=${powertop_bin} --auto-tune
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT"
+
+    run "Activation de powertop-autotune" \
+        systemctl enable --now powertop-autotune.service
+    info "Pour annuler : ${C_YELLOW}sudo systemctl disable --now powertop-autotune${C_RESET}"
+    info "puis supprimer ${POWERTOP_UNIT}"
+}
+
+optimize_laptop() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'optimisation portable nécessite les droits root : sudo ${CMD_NAME} --laptop"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — portable & autonomie ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "Détection du matériel"
+    if has_battery; then
+        local bat_state
+        bat_state="$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1)"
+        info "Batterie détectée (charge : ${bat_state:-?} %)"
+    else
+        info "${C_YELLOW}Aucune batterie détectée : cette machine semble être un poste fixe.${C_RESET}"
+        info "${C_YELLOW}Ces réglages visent l'autonomie et peuvent brider les performances.${C_RESET}"
+        if ! ask_yes_no "Continuer quand même ?"; then
+            info "Optimisation portable annulée."
+            return 0
+        fi
+    fi
+    info "Processeur : $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
+
+    section "Gestionnaire d'énergie"
+    laptop_power_manager
+
+    section "Gestion thermique"
+    laptop_thermald
+
+    section "Réglages d'économie (powertop)"
+    laptop_powertop
+
+    section "Bilan"
+    info "Autonomie estimée et détail des réglages : ${C_YELLOW}sudo powertop${C_RESET}"
+    if pkg_installed tlp; then
+        info "État de TLP : ${C_YELLOW}sudo tlp-stat -s${C_RESET}"
+    fi
+}
+
+#===============================================================================
+#===============================================================================
+# SÉCURITÉ / RÉSEAU (--security)
+#
+# Vérifie et renforce les protections de base d'une installation Fedora.
+# L'esprit de cette section est de constater puis proposer : rien n'est
+# durci de force, car un pare-feu trop strict ou un résolveur DNS mal choisi
+# casse la connectivité de façon difficile à diagnostiquer.
+#
+# Les mises à jour automatiques sont volontairement configurées en mode
+# « téléchargement + notification » et non en installation automatique :
+# installer des paquets sans surveillance sur un poste de travail peut
+# interrompre une session (services redémarrés, modules noyau remplacés).
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --security.
+#===============================================================================
+
+# SELinux est une protection majeure de Fedora, souvent désactivée à tort en
+# suivant des tutoriels. On se contente de signaler : le réactiver à chaud
+# sur un système ayant tourné en permissive exige un réétiquetage complet.
+security_selinux() {
+    if ! has_cmd getenforce; then
+        info "SELinux : outils absents, état indéterminé."
+        return 0
+    fi
+
+    local state
+    state="$(getenforce 2>/dev/null)"
+
+    case "$state" in
+        Enforcing)
+            info "SELinux : ${C_GREEN}Enforcing${C_RESET} (protection active)"
+            ;;
+        Permissive)
+            info "SELinux : ${C_YELLOW}Permissive${C_RESET} — les violations sont"
+            info "journalisées mais autorisées."
+            info "Pour réactiver : ${C_YELLOW}sudo setenforce 1${C_RESET} puis passer"
+            info "SELINUX=enforcing dans /etc/selinux/config"
+            ;;
+        Disabled)
+            info "SELinux : ${C_RED}Disabled${C_RESET}"
+            info "${C_YELLOW}Le réactiver impose un réétiquetage complet du disque${C_RESET}"
+            info "${C_YELLOW}(sudo fixfiles -F onboot puis redémarrage) : à faire${C_RESET}"
+            info "${C_YELLOW}en connaissance de cause, hors de ce script.${C_RESET}"
+            ;;
+        *)
+            info "SELinux : état indéterminé (${state:-?})"
+            ;;
+    esac
+}
+
+# firewalld est actif par défaut sur Fedora ; on vérifie qu'il l'est bien et
+# on affiche la zone appliquée, sans la modifier : la zone conditionne les
+# services joignables et un changement peut couper un partage en cours.
+security_firewall() {
+    if ! pkg_installed firewalld; then
+        info "firewalld n'est pas installé."
+        if ask_yes_no "Installer et activer firewalld ?"; then
+            run "Installation de firewalld" dnf install -y firewalld
+            run "Activation de firewalld" systemctl enable --now firewalld
+        fi
+        return 0
+    fi
+
+    if ! systemctl is-active --quiet firewalld; then
+        info "${C_YELLOW}firewalld est installé mais inactif.${C_RESET}"
+        if ask_yes_no "Activer firewalld ?"; then
+            run "Activation de firewalld" systemctl enable --now firewalld
+        fi
+        return 0
+    fi
+
+    local zone
+    zone="$(firewall-cmd --get-default-zone 2>/dev/null)"
+    info "firewalld : ${C_GREEN}actif${C_RESET} (zone « ${zone:-?} »)"
+
+    # FedoraWorkstation ouvre par défaut les ports hauts 1025-65535 en UDP
+    # pour faciliter le partage et la découverte réseau. C'est un compromis
+    # d'ergonomie discutable sur un réseau non maîtrisé (Wi-Fi public).
+    if [[ "$zone" == "FedoraWorkstation" ]]; then
+        info "${C_YELLOW}Cette zone laisse ouverts les ports UDP 1025-65535${C_RESET}"
+        info "${C_YELLOW}(partage de fichiers, découverte réseau). Sur un réseau${C_RESET}"
+        info "${C_YELLOW}public, la zone « public » est nettement plus stricte.${C_RESET}"
+        info "Services ouverts : ${C_YELLOW}firewall-cmd --list-all${C_RESET}"
+        info "Pour durcir : ${C_YELLOW}sudo firewall-cmd --set-default-zone=public${C_RESET}"
+    fi
+}
+
+# Mises à jour automatiques en mode « télécharger et prévenir ». Le paquet
+# diffère selon la génération de DNF : dnf5-plugin-automatic sur dnf5,
+# dnf-automatic sur dnf4.
+security_auto_updates() {
+    # Le nom du paquet, du minuteur et du fichier de configuration diffèrent
+    # selon la génération de DNF. Le paquet dnf5 fournit les deux minuteurs
+    # (dnf-automatic.timer et dnf5-automatic.timer) : c'est dnf5-automatic
+    # qu'il faut activer, et sa configuration effective est dans
+    # /etc/dnf/dnf5-plugins/automatic.conf, pas /etc/dnf/automatic.conf.
+    local pkg="dnf-automatic" timer="dnf-automatic.timer"
+    local conf="/etc/dnf/automatic.conf"
+
+    if dnf --version 2>/dev/null | grep -q '^dnf5'; then
+        pkg="dnf5-plugin-automatic"
+        timer="dnf5-automatic.timer"
+        conf="/etc/dnf/dnf5-plugins/automatic.conf"
+    fi
+
+    if systemctl is-enabled --quiet dnf-automatic.timer 2>/dev/null \
+        || systemctl is-enabled --quiet dnf5-automatic.timer 2>/dev/null; then
+        info "Mises à jour automatiques déjà configurées"
+        return 0
+    fi
+
+    info "Les mises à jour de sécurité peuvent être téléchargées"
+    info "automatiquement, avec notification (sans installation silencieuse)."
+
+    if ! ask_yes_no "Activer les mises à jour automatiques (téléchargement seul) ?"; then
+        info "Mises à jour automatiques non activées."
+        return 0
+    fi
+
+    if ! pkg_installed "$pkg"; then
+        if ! run "Installation de ${pkg}" dnf install -y "$pkg"; then
+            error "Installation de ${pkg} impossible : étape abandonnée."
+            return 1
+        fi
+    fi
+
+    # download_updates=yes / apply_updates=no : on récupère les paquets pour
+    # que l'installation manuelle soit immédiate, sans rien appliquer seul.
+    if [[ -f "$conf" ]]; then
+        run "Sauvegarde de ${conf}.bak" cp -p "$conf" "${conf}.bak"
+        run "Configuration : téléchargement sans installation" \
+            sed -i -e 's/^upgrade_type\s*=.*/upgrade_type = security/' \
+                   -e 's/^download_updates\s*=.*/download_updates = yes/' \
+                   -e 's/^apply_updates\s*=.*/apply_updates = no/' "$conf"
+    else
+        info "${C_YELLOW}Fichier de configuration introuvable ($conf) :${C_RESET}"
+        info "${C_YELLOW}vérifiez que apply_updates reste à « no ».${C_RESET}"
+    fi
+
+    run "Activation du minuteur ${timer}" systemctl enable --now "$timer"
+    info "Mises à jour en attente visibles avec : ${C_YELLOW}dnf check-update${C_RESET}"
+}
+
+# DNS chiffré (DNS-over-TLS). Volontairement prudent : si le résolveur
+# courant est une adresse privée, il s'agit d'un DNS local (box, réseau
+# d'entreprise) qui résout des noms internes. Le remplacer par un résolveur
+# public casserait l'accès aux ressources locales.
+security_dns() {
+    if ! systemctl is-active --quiet systemd-resolved; then
+        info "systemd-resolved inactif : configuration DNS laissée telle quelle."
+        return 0
+    fi
+
+    local current dot_state
+    current="$(resolvectl status 2>/dev/null | awk '/Current DNS Server/ {print $NF; exit}')"
+    # resolvectl préfixe le protocole d'un + (actif) ou d'un - (inactif) :
+    # « +DNSOverTLS » / « -DNSOverTLS », sans valeur après un signe égal.
+    dot_state="$(resolvectl status 2>/dev/null | grep -o '[+-]DNSOverTLS' | head -1)"
+
+    info "Résolveur DNS actuel : ${current:-inconnu}"
+
+    if [[ "$dot_state" == "+DNSOverTLS" ]]; then
+        info "DNS-over-TLS : ${C_GREEN}déjà actif${C_RESET}"
+        return 0
+    fi
+
+    # Adresses privées (RFC 1918) : résolveur local, on n'y touche pas.
+    if [[ "$current" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+        info "${C_YELLOW}Ce résolveur est local (adresse privée) : il résout${C_RESET}"
+        info "${C_YELLOW}probablement des noms internes à votre réseau.${C_RESET}"
+        info "${C_YELLOW}Le remplacer par un résolveur public casserait cet accès :${C_RESET}"
+        info "${C_YELLOW}étape ignorée par précaution.${C_RESET}"
+        return 0
+    fi
+
+    info "Le DNS non chiffré est lisible par tout intermédiaire réseau."
+    info "DNS-over-TLS chiffre ces requêtes (résolveur : Quad9, 9.9.9.9)."
+
+    if ! ask_yes_no "Activer DNS-over-TLS via Quad9 ?"; then
+        info "Configuration DNS inchangée."
+        return 0
+    fi
+
+    local conf_dir="/etc/systemd/resolved.conf.d"
+    local conf="${conf_dir}/99-fedora-setup-dot.conf"
+
+    install -d "$conf_dir"
+    # opportunistic plutôt que yes : en mode strict, un portail captif ou un
+    # réseau bloquant le port 853 rend toute résolution impossible.
+    run "Configuration de DNS-over-TLS" \
+        bash -c "cat > '$conf' <<'RESOLVED'
+# Généré par fedora-setup --security
+[Resolve]
+DNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net
+DNSOverTLS=opportunistic
+RESOLVED"
+
+    run "Redémarrage de systemd-resolved" systemctl restart systemd-resolved
+    info "Vérifier avec : ${C_YELLOW}resolvectl status${C_RESET}"
+    info "Pour annuler : supprimer ${conf} et redémarrer systemd-resolved"
+}
+
+secure_system() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "Le durcissement nécessite les droits root : sudo ${CMD_NAME} --security"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — sécurité & réseau ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "SELinux"
+    security_selinux
+
+    section "Pare-feu"
+    security_firewall
+
+    section "Mises à jour automatiques"
+    security_auto_updates
+
+    section "Confidentialité DNS"
+    security_dns
+
+    section "Bilan"
+    info "Aucun réglage n'a été durci sans confirmation."
+    info "État du pare-feu : ${C_YELLOW}sudo firewall-cmd --list-all${C_RESET}"
+}
+
+#===============================================================================
+#===============================================================================
+# OUTILS DE DÉVELOPPEMENT (--devtools)
+#
+# Environnements de développement isolés et polices de caractères. Tout est
+# proposé individuellement : ces outils sont volumineux (la virtualisation
+# dépasse le gigaoctet) et n'ont d'intérêt que selon l'usage réel.
+#
+# Distrobox et Toolbox répondent au même besoin — un conteneur jetable où
+# installer des dépendances sans polluer le système — mais Toolbox est fourni
+# par Fedora et limité aux images Fedora, là où Distrobox accepte n'importe
+# quelle distribution (Ubuntu, Arch, Debian…). Les deux peuvent coexister
+# sans conflit, contrairement à TLP et power-profiles-daemon.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --devtools.
+#===============================================================================
+
+# Conteneurs de développement jetables, intégrés au système hôte
+# (le dossier personnel et l'affichage graphique restent accessibles).
+devtools_containers() {
+    if pkg_installed distrobox; then
+        info "distrobox déjà installé"
+    else
+        info "${C_BOLD}Distrobox${C_RESET} — conteneurs de développement basés sur"
+        info "n'importe quelle distribution, avec accès au dossier personnel."
+        if pkg_installed toolbox; then
+            info "(toolbox est déjà présent : il fait de même, mais uniquement"
+            info "avec des images Fedora. Les deux peuvent cohabiter.)"
+        fi
+
+        if ask_yes_no "Installer distrobox ?"; then
+            # podman est le moteur de conteneurs utilisé par distrobox ;
+            # il est déjà présent sur une Workstation, mais pas garanti.
+            run "Installation de distrobox" dnf install -y distrobox podman
+            info "Créer un conteneur : ${C_YELLOW}distrobox create --name dev --image fedora:latest${C_RESET}"
+            info "Y entrer : ${C_YELLOW}distrobox enter dev${C_RESET}"
+        else
+            info "distrobox ignoré."
+        fi
+    fi
+}
+
+# Virtualisation KVM/QEMU via libvirt. Nécessite un processeur compatible :
+# sans VT-x/AMD-V, libvirt se rabat sur une émulation logicielle très lente,
+# ce qui rend l'installation inutile en pratique.
+devtools_virtualization() {
+    local virt_flags
+    virt_flags="$(grep -Ec 'vmx|svm' /proc/cpuinfo || true)"
+
+    if [[ "${virt_flags:-0}" -eq 0 ]]; then
+        info "${C_YELLOW}Aucune extension de virtualisation (VT-x / AMD-V) détectée.${C_RESET}"
+        info "${C_YELLOW}Vérifiez qu'elle est activée dans le BIOS/UEFI. Sans elle,${C_RESET}"
+        info "${C_YELLOW}les machines virtuelles seraient émulées et très lentes.${C_RESET}"
+        if ! ask_yes_no "Installer quand même la virtualisation ?"; then
+            info "Virtualisation ignorée."
+            return 0
+        fi
+    else
+        info "Extensions de virtualisation : ${C_GREEN}disponibles${C_RESET}"
+    fi
+
+    if pkg_installed libvirt && pkg_installed virt-manager; then
+        info "Virtualisation déjà installée"
+    else
+        info "${C_BOLD}KVM / libvirt${C_RESET} — machines virtuelles natives (~1 Go)."
+        if ! ask_yes_no "Installer la virtualisation (KVM, libvirt, virt-manager) ?"; then
+            info "Virtualisation ignorée."
+            return 0
+        fi
+        # Le groupe « virtualization » ne rend obligatoire que virt-install :
+        # il ne tire ni virt-manager ni qemu-kvm. Les paquets sont donc
+        # nommés explicitement pour obtenir un environnement réellement
+        # utilisable (moteur, démon, interface graphique, réseau NAT).
+        run "Installation de KVM / libvirt / virt-manager" \
+            dnf install -y qemu-kvm libvirt libvirt-daemon-config-network \
+                virt-install virt-manager
+    fi
+
+    run "Activation de libvirtd" systemctl enable --now libvirtd
+
+    # Sans appartenance au groupe libvirt, virt-manager réclame le mot de
+    # passe root à chaque lancement.
+    local user
+    if user="$(gnome_user)"; then
+        if id -nG "$user" | grep -qw libvirt; then
+            info "L'utilisateur « $user » est déjà dans le groupe libvirt"
+        else
+            run "Ajout de « $user » au groupe libvirt" usermod -aG libvirt "$user"
+            info "${C_YELLOW}Déconnectez-vous / reconnectez-vous pour que ce groupe${C_RESET}"
+            info "${C_YELLOW}prenne effet.${C_RESET}"
+        fi
+    fi
+}
+
+# Polices de caractères : rendu des pages web et des documents Office.
+# Les polices Microsoft ne sont pas redistribuables par Fedora et doivent
+# être récupérées séparément ; on se limite ici aux alternatives libres
+# métriquement compatibles, sans dépendance externe ni acceptation d'EULA.
+devtools_fonts() {
+    info "Polices proposées :"
+    info "  - ${C_BOLD}Liberation${C_RESET} : équivalents libres d'Arial, Times, Courier"
+    info "  - ${C_BOLD}Google Noto${C_RESET} : couverture Unicode étendue (emoji, CJK)"
+    info "  - ${C_BOLD}Fira Code / JetBrains Mono${C_RESET} : polices de programmation"
+
+    if ! ask_yes_no "Installer ces polices ?"; then
+        info "Polices ignorées."
+        return 0
+    fi
+
+    run "Installation des polices Liberation" \
+        dnf install -y liberation-fonts-all
+    run "Installation des polices Noto (emoji et CJK)" \
+        dnf install -y google-noto-emoji-fonts google-noto-sans-cjk-fonts
+    run "Installation des polices de programmation" \
+        dnf install -y fira-code-fonts jetbrains-mono-fonts
+
+    run "Reconstruction du cache de polices" fc-cache -f
+}
+
+install_devtools() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'installation des outils nécessite les droits root : sudo ${CMD_NAME} --devtools"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — outils de développement ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "Conteneurs de développement"
+    devtools_containers
+
+    section "Virtualisation"
+    devtools_virtualization
+
+    section "Polices de caractères"
+    devtools_fonts
+
+    section "Bilan"
+    info "Chaque outil non installé peut l'être plus tard en relançant"
+    info "${C_YELLOW}sudo ${CMD_NAME} --devtools${C_RESET}"
+}
+
+#===============================================================================
+#===============================================================================
 # BASHRC (installation explicite, hors du flux principal)
 #
 # Installe ~/.bashrc de l'utilisateur cible ($SUDO_USER) depuis le gabarit
@@ -1218,6 +2180,11 @@ parse_args() {
             --bashrc)      install_bashrc; exit 0 ;;
             --docker)      install_docker; exit 0 ;;
             --clean)       clean_system; exit 0 ;;
+            --memory)      optimize_memory; exit 0 ;;
+            --boot)        optimize_boot; exit 0 ;;
+            --laptop)      optimize_laptop; exit 0 ;;
+            --security)    secure_system; exit 0 ;;
+            --devtools)    install_devtools; exit 0 ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac
