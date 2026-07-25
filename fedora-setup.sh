@@ -13,6 +13,7 @@
 #                   (NVIDIA, AMD, Intel — y compris hybride type Optimus)
 #                 - Installe/supprime des paquets RPM et Flatpak d'après
 #                   des fichiers de listes externes (rpm.list / flatpak.list)
+#                 - Installe Docker CE sur demande (--docker)
 #
 #  LISTES       : une entrée par ligne, syntaxe :
 #                     add:paquet   -> installe le paquet
@@ -217,6 +218,10 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   bashrc.example, en sauvegardant l'ancien en ~/.bashrc.bak
                   si présent et différent. N'est jamais exécuté
                   automatiquement, uniquement sur demande explicite.
+  --docker        Installer et configurer Docker CE depuis le dépôt officiel
+                  (moteur, CLI, containerd, plugins buildx et compose),
+                  ajouter \$SUDO_USER au groupe docker et valider avec
+                  l'image hello-world. N'est jamais exécuté automatiquement.
 
 Listes réelles vs gabarits :
   Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
@@ -739,6 +744,121 @@ install_bashrc() {
 }
 
 #===============================================================================
+# DOCKER (installation explicite, hors du flux principal)
+#
+# Fedora fournit « moby-engine » dans ses dépôts, mais la version officielle
+# Docker CE (dépôt download.docker.com) est celle que documente Docker et la
+# seule à fournir buildx et compose v2 en plugins. C'est donc elle qu'on
+# installe ici, après avoir retiré les paquets Fedora concurrents qui entrent
+# en conflit sur les mêmes fichiers.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --docker,
+# comme --bashrc.
+#===============================================================================
+
+readonly DOCKER_REPO_URL="https://download.docker.com/linux/fedora/docker-ce.repo"
+readonly DOCKER_REPO_FILE="/etc/yum.repos.d/docker-ce.repo"
+
+# Paquets Fedora en conflit avec Docker CE : ils fournissent les mêmes
+# binaires (/usr/bin/docker, containerd) et bloqueraient l'installation.
+readonly DOCKER_CONFLICTS=(docker docker-client docker-client-latest \
+    docker-common docker-latest docker-latest-logrotate docker-logrotate \
+    docker-selinux docker-engine-selinux docker-engine moby-engine)
+
+# Paquets Docker CE à installer (moteur + CLI + runtime + plugins officiels)
+readonly DOCKER_PACKAGES=(docker-ce docker-ce-cli containerd.io \
+    docker-buildx-plugin docker-compose-plugin)
+
+# Ajoute le dépôt officiel Docker CE (idempotent : ne retélécharge pas le
+# .repo s'il est déjà en place).
+docker_setup_repo() {
+    if [[ -f "$DOCKER_REPO_FILE" ]]; then
+        info "Dépôt Docker CE déjà présent ($DOCKER_REPO_FILE)"
+        return 0
+    fi
+    run "Ajout du dépôt Docker CE" \
+        curl -fsSL -o "$DOCKER_REPO_FILE" "$DOCKER_REPO_URL"
+}
+
+# Retire les paquets Fedora qui entrent en conflit avec Docker CE.
+docker_remove_conflicts() {
+    local p conflicts=()
+    for p in "${DOCKER_CONFLICTS[@]}"; do
+        pkg_installed "$p" && conflicts+=("$p")
+    done
+
+    if [[ ${#conflicts[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    info "Paquets en conflit détectés : ${conflicts[*]}"
+    run "Suppression des paquets en conflit" dnf remove -y "${conflicts[@]}"
+}
+
+# Ajoute l'utilisateur réel ($SUDO_USER) au groupe docker, ce qui permet
+# d'utiliser docker sans sudo. Le groupe est créé par le paquet docker-ce.
+docker_add_user_to_group() {
+    local user
+    user="$(gnome_user)" || {
+        info "Utilisateur cible inconnu : ajout au groupe docker ignoré."
+        return 0
+    }
+
+    if id -nG "$user" | grep -qw docker; then
+        info "L'utilisateur « $user » est déjà dans le groupe docker"
+        return 0
+    fi
+
+    run "Ajout de « $user » au groupe docker" usermod -aG docker "$user"
+
+    info "${C_YELLOW}Attention : appartenir au groupe docker équivaut à un accès root${C_RESET}"
+    info "${C_YELLOW}(le démon tourne en root et peut monter n'importe quel volume).${C_RESET}"
+    info "${C_YELLOW}Déconnectez-vous / reconnectez-vous pour que ce groupe prenne effet.${C_RESET}"
+}
+
+# Vérifie l'installation avec l'image de test officielle. Le démon doit
+# tourner : on le démarre pour la session courante (sans l'activer au boot,
+# ce choix restant à l'utilisateur via « systemctl enable docker »).
+docker_verify() {
+    if ! systemctl is-active --quiet docker; then
+        run "Démarrage du service docker" systemctl start docker
+    fi
+
+    if run "Test docker run hello-world" docker run --rm hello-world; then
+        info "${C_GREEN}Docker fonctionne correctement.${C_RESET}"
+    else
+        error "Le test hello-world a échoué (voir $LOG_FILE)."
+    fi
+}
+
+install_docker() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'installation de Docker nécessite les droits root : sudo ${CMD_NAME} --docker"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — installation de Docker ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "Docker CE"
+    docker_setup_repo
+    docker_remove_conflicts
+    run "Installation de Docker CE" dnf install -y "${DOCKER_PACKAGES[@]}"
+    docker_add_user_to_group
+    docker_verify
+
+    info "Le service n'est pas activé au démarrage. Pour le faire :"
+    info "  ${C_YELLOW}sudo systemctl enable --now docker${C_RESET}"
+}
+
+#===============================================================================
 # REDÉMARRAGE
 #===============================================================================
 
@@ -935,6 +1055,7 @@ parse_args() {
             --update)      update_command; exit 0 ;;
             --uninstall)   uninstall_command; exit 0 ;;
             --bashrc)      install_bashrc; exit 0 ;;
+            --docker)      install_docker; exit 0 ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac

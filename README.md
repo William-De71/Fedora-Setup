@@ -23,12 +23,15 @@ et s'adapte donc à n'importe quel PC (NVIDIA, AMD, Intel, ou hybride).
    `gnome-extensions.list`, via `gnome-extensions-cli`.
 8. Propose un **redémarrage** si nécessaire (`dnf needs-restarting`).
 
+À la demande uniquement (hors flux principal) : **Docker CE** via `--docker`.
+
 Le script est **idempotent** : il peut être relancé sans risque, il ne refait
 que ce qui est nécessaire.
 
-En complément, une option dédiée `--bashrc` (voir plus bas) permet d'installer
-un `~/.bashrc` personnalisé — elle n'est **jamais** exécutée automatiquement,
-uniquement sur demande explicite.
+En complément, deux options dédiées (voir plus bas) ne sont **jamais** exécutées
+automatiquement, uniquement sur demande explicite :
+- `--bashrc` : installe un `~/.bashrc` personnalisé ;
+- `--docker` : installe et configure Docker CE.
 
 ## Installation en tant que commande système
 
@@ -159,6 +162,7 @@ sudo fedora-setup
 | `--update` | Mettre à jour l'installation système (nécessite un remote git) |
 | `--uninstall` | Désinstaller la commande et `/opt/fedora-setup` |
 | `--bashrc` | Installer `~/.bashrc` depuis `bashrc.example` (voir plus bas) |
+| `--docker` | Installer et configurer Docker CE (voir plus bas) |
 | `-h`, `--help` | Afficher l'aide |
 
 Par défaut, la sortie des commandes est affichée en direct à l'écran (mode
@@ -268,6 +272,50 @@ Cette commande :
 Comme pour les listes de paquets, seul `bashrc.example` est versionné dans le
 dépôt : votre `~/.bashrc` réel n'est pas suivi par git et peut être modifié
 librement ensuite — `--update` (mise à jour du script) n'y touche jamais.
+
+## Docker (`--docker`)
+
+Installe **Docker CE depuis le dépôt officiel** de Docker
+(`download.docker.com`) plutôt que le paquet `moby-engine` des dépôts Fedora :
+c'est la version documentée par Docker, et la seule à fournir `buildx` et
+`compose` v2 sous forme de plugins.
+
+```bash
+sudo fedora-setup --docker
+```
+
+Cette commande, dans l'ordre :
+
+1. ajoute le dépôt `docker-ce` dans `/etc/yum.repos.d/docker-ce.repo` (ignoré
+   s'il est déjà présent) ;
+2. **supprime les paquets Fedora en conflit** s'ils sont installés
+   (`moby-engine`, `docker`, `docker-common`, `containerd`…) : ils fournissent
+   les mêmes binaires et bloqueraient l'installation ;
+3. installe `docker-ce`, `docker-ce-cli`, `containerd.io`,
+   `docker-buildx-plugin` et `docker-compose-plugin` ;
+4. ajoute l'utilisateur réel (`$SUDO_USER`, pas root — même principe que pour
+   les extensions GNOME) au **groupe `docker`** ;
+5. démarre le service et valide l'installation avec
+   `docker run --rm hello-world`.
+
+> ⚠️ **Appartenir au groupe `docker` équivaut à un accès root** : le démon
+> tourne en root et n'importe quel conteneur peut monter le système de fichiers
+> hôte. C'est le compromis standard pour utiliser `docker` sans `sudo` ; si
+> vous ne le souhaitez pas, retirez l'utilisateur du groupe avec
+> `sudo gpasswd -d $USER docker`.
+>
+> Le changement de groupe ne prend effet qu'après une **déconnexion /
+> reconnexion** de la session.
+
+Le service est démarré pour la session courante mais **n'est pas activé au
+démarrage**, ce choix vous restant :
+
+```bash
+sudo systemctl enable --now docker   # démarrage automatique au boot
+```
+
+Comme `--bashrc`, cette étape ne fait **pas** partie du flux principal : un
+`sudo fedora-setup` classique n'installe jamais Docker.
 
 ## Journal
 
