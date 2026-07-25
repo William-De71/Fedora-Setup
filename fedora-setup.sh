@@ -218,6 +218,14 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   si présent et différent. N'est jamais exécuté
                   automatiquement, uniquement sur demande explicite.
 
+Nettoyage & maintenance :
+  --clean         Récupérer de l'espace disque : paquets orphelins, cache
+                  DNF, journal systemd (plafonné à ${JOURNAL_MAX_SIZE}),
+                  anciens noyaux, runtimes Flatpak inutilisés, anciens
+                  journaux du script (${SETUP_LOG_KEEP} conservés) et TRIM
+                  du SSD. Affiche l'espace récupéré. N'est jamais exécuté
+                  automatiquement.
+
 Listes réelles vs gabarits :
   Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
   flatpak.list.example, repos.list.example, gnome-extensions.list.example).
@@ -321,6 +329,7 @@ configure_dnf() {
     dnf_conf_set "max_parallel_downloads" "10"   # téléchargements parallèles
     dnf_conf_set "fastestmirror" "true"          # sélection du miroir le plus rapide
     dnf_conf_set "countme" "false"               # pas de statistiques d'usage
+    dnf_conf_set "installonly_limit" "2"         # 2 noyaux conservés au lieu de 3
 }
 
 #===============================================================================
@@ -701,6 +710,158 @@ install_gnome_extensions() {
 }
 
 #===============================================================================
+# NETTOYAGE & MAINTENANCE (--clean)
+#
+# Récupère de l'espace disque et borne ce qui grossit sans limite sur une
+# installation Fedora utilisée au quotidien :
+#   - paquets orphelins (dnf autoremove) et cache DNF (souvent ~1 Go)
+#   - journal systemd (par défaut plafonné à 10 % de /var, soit plusieurs Go)
+#   - anciens noyaux au-delà de installonly_limit
+#   - runtimes Flatpak inutilisés
+#   - propres journaux du script, qui n'avaient aucune rotation
+#   - TRIM du SSD
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --clean.
+#===============================================================================
+
+# Taille maximale conservée pour le journal systemd (persistant).
+readonly JOURNAL_MAX_SIZE="200M"
+readonly JOURNALD_CONF="/etc/systemd/journald.conf.d/99-fedora-setup.conf"
+
+# Nombre de journaux du script à conserver (les plus récents).
+readonly SETUP_LOG_KEEP=10
+
+# Paquets orphelins + cache DNF. « dnf clean packages » ne supprime que les
+# .rpm téléchargés, pas les métadonnées : le prochain dnf reste rapide.
+clean_dnf() {
+    run "Suppression des paquets orphelins" dnf autoremove -y
+    run "Purge du cache des paquets DNF" dnf clean packages
+}
+
+# Borne durablement le journal systemd. On écrit dans un drop-in plutôt que
+# dans journald.conf pour ne pas entrer en conflit avec le paquet systemd.
+clean_journal() {
+    local before
+    before="$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.,]+[KMG]' | tail -1)"
+    info "Journal systemd avant nettoyage : ${before:-inconnu}"
+
+    run "Réduction du journal à ${JOURNAL_MAX_SIZE}" \
+        journalctl --vacuum-size="$JOURNAL_MAX_SIZE"
+
+    if [[ ! -f "$JOURNALD_CONF" ]]; then
+        install -d "$(dirname "$JOURNALD_CONF")"
+        run "Plafonnement permanent du journal (SystemMaxUse=${JOURNAL_MAX_SIZE})" \
+            bash -c "printf '[Journal]\nSystemMaxUse=%s\n' '$JOURNAL_MAX_SIZE' > '$JOURNALD_CONF'"
+    else
+        info "Plafond du journal déjà configuré ($JOURNALD_CONF)"
+    fi
+}
+
+# Supprime les noyaux excédentaires. dnf respecte installonly_limit lors des
+# mises à jour, mais les noyaux déjà accumulés avant ne sont pas retirés
+# rétroactivement : « dnf remove --oldinstallonly » s'en charge.
+clean_kernels() {
+    local installed
+    installed=$(rpm -q kernel-core | wc -l)
+    info "Noyaux installés : ${installed}"
+
+    if [[ "$installed" -le 2 ]]; then
+        info "Rien à purger (limite de 2 noyaux déjà respectée)"
+        return 0
+    fi
+
+    run "Suppression des anciens noyaux" \
+        dnf remove -y --oldinstallonly --setopt=installonly_limit=2
+}
+
+# Runtimes Flatpak devenus inutiles (souvent plusieurs centaines de Mo).
+clean_flatpak() {
+    if ! has_cmd flatpak; then
+        info "Flatpak non installé : étape ignorée."
+        return 0
+    fi
+    run "Suppression des runtimes Flatpak inutilisés" \
+        flatpak uninstall --unused --noninteractive -y
+}
+
+# Rotation des journaux du script lui-même : un fichier est créé à chaque
+# exécution dans /var/log et rien ne les supprimait jusqu'ici.
+clean_setup_logs() {
+    local logs count
+    # Le log de l'exécution courante est exclu : il est encore en écriture.
+    # tail -n +N démarre à la ligne N incluse : pour conserver les
+    # SETUP_LOG_KEEP plus récents, la purge commence donc à N+1.
+    mapfile -t logs < <(find /var/log -maxdepth 1 -name 'fedora-setup_*.log' \
+        ! -samefile "$LOG_FILE" -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | tail -n "+$((SETUP_LOG_KEEP + 1))" | cut -d' ' -f2-)
+
+    count=${#logs[@]}
+    if [[ $count -eq 0 ]]; then
+        info "Journaux du script : rien à purger (max ${SETUP_LOG_KEEP} conservés)"
+        return 0
+    fi
+
+    run "Suppression de ${count} ancien(s) journal(aux) du script" \
+        rm -f "${logs[@]}"
+}
+
+# TRIM : indispensable pour préserver les performances d'un SSD dans la durée.
+# fstrim.timer le fait déjà chaque semaine ; on vérifie qu'il est actif.
+clean_trim() {
+    if ! systemctl is-enabled --quiet fstrim.timer 2>/dev/null; then
+        run "Activation du TRIM hebdomadaire (fstrim.timer)" \
+            systemctl enable --now fstrim.timer
+    else
+        info "TRIM hebdomadaire déjà actif (fstrim.timer)"
+    fi
+
+    run "TRIM immédiat de tous les systèmes de fichiers" fstrim -av
+}
+
+clean_system() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "Le nettoyage nécessite les droits root : sudo ${CMD_NAME} --clean"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — nettoyage & maintenance ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    local free_before free_after
+    free_before=$(df --output=avail -BM / | tail -1 | tr -d ' M')
+
+    section "Paquets et cache DNF"
+    clean_dnf
+
+    section "Journal systemd"
+    clean_journal
+
+    section "Anciens noyaux"
+    clean_kernels
+
+    section "Runtimes Flatpak"
+    clean_flatpak
+
+    section "Journaux de ${CMD_NAME}"
+    clean_setup_logs
+
+    section "TRIM du SSD"
+    clean_trim
+
+    section "Bilan"
+    free_after=$(df --output=avail -BM / | tail -1 | tr -d ' M')
+    info "Espace libre sur / : ${free_before} Mo -> ${C_GREEN}${free_after} Mo${C_RESET}"
+    info "Récupéré : ${C_GREEN}$(( free_after - free_before )) Mo${C_RESET}"
+}
+
+#===============================================================================
 # BASHRC (installation explicite, hors du flux principal)
 #
 # Installe ~/.bashrc de l'utilisateur cible ($SUDO_USER) depuis le gabarit
@@ -935,6 +1096,7 @@ parse_args() {
             --update)      update_command; exit 0 ;;
             --uninstall)   uninstall_command; exit 0 ;;
             --bashrc)      install_bashrc; exit 0 ;;
+            --clean)       clean_system; exit 0 ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac
