@@ -1,0 +1,521 @@
+/* ==========================================================================
+   Fedora Setup — documentation
+   Palette ancrée sur le bleu Fedora (#294172), désaturé pour du texte long.
+   Neutres à biais bleu froid ; cuivre et vert réservés au sens (avertissement,
+   confirmation), jamais décoratifs.
+   ========================================================================== */
+
+:root {
+    /* Fonds et surfaces */
+    --bg:            #fbfcfd;
+    --surface:       #ffffff;
+    --surface-alt:   #f2f5f8;
+    --border:        #dde4ec;
+    --border-strong: #c3cedb;
+
+    /* Texte */
+    --text:          #16202c;
+    --text-muted:    #5a6472;
+    --text-faint:    #656f7c;
+
+    /* Accent : bleu Fedora */
+    --accent:        #294172;
+    --accent-hover:  #1d3059;
+    --accent-soft:   #e8edf6;
+    --accent-line:   #a8bade;
+
+    /* Sémantique — distincte de l'accent */
+    --warn:          #9c5228;
+    --warn-soft:     #fbf0e8;
+    --warn-line:     #e5c3a8;
+    --ok:            #256b46;
+    --ok-soft:       #e6f2ec;
+    --ok-line:       #a9d3bd;
+
+    /* Type */
+    --sans: "IBM Plex Sans", "Source Sans 3", "Cantarell", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", "JetBrains Mono", "Fira Mono", "DejaVu Sans Mono", ui-monospace, monospace;
+
+    /* Échelle typographique */
+    --t-xs:   0.75rem;
+    --t-sm:   0.8125rem;
+    --t-base: 0.9375rem;
+    --t-md:   1.0625rem;
+    --t-lg:   1.375rem;
+    --t-xl:   1.875rem;
+    --t-2xl:  2.5rem;
+
+    --sidebar-w: 16.5rem;
+    --radius: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg:            #0f1319;
+        --surface:       #161c24;
+        --surface-alt:   #1c242e;
+        --border:        #2a333f;
+        --border-strong: #3a4553;
+
+        --text:          #e4e9ef;
+        --text-muted:    #a0abb9;
+        --text-faint:    #77828f;
+
+        --accent:        #8fabdc;
+        --accent-hover:  #aec4e9;
+        --accent-soft:   #1a2436;
+        --accent-line:   #3d5a8c;
+
+        --warn:          #d99a6f;
+        --warn-soft:     #2a1f17;
+        --warn-line:     #4d3a2a;
+        --ok:            #7cc4a0;
+        --ok-soft:       #16261e;
+        --ok-line:       #2f5c43;
+    }
+}
+
+:root[data-theme="dark"] {
+    --bg:            #0f1319;
+    --surface:       #161c24;
+    --surface-alt:   #1c242e;
+    --border:        #2a333f;
+    --border-strong: #3a4553;
+
+    --text:          #e4e9ef;
+    --text-muted:    #a0abb9;
+    --text-faint:    #77828f;
+
+    --accent:        #8fabdc;
+    --accent-hover:  #aec4e9;
+    --accent-soft:   #1a2436;
+    --accent-line:   #3d5a8c;
+
+    --warn:          #d99a6f;
+    --warn-soft:     #2a1f17;
+    --warn-line:     #4d3a2a;
+    --ok:            #7cc4a0;
+    --ok-soft:       #16261e;
+    --ok-line:       #2f5c43;
+}
+
+:root[data-theme="light"] {
+    --bg:            #fbfcfd;
+    --surface:       #ffffff;
+    --surface-alt:   #f2f5f8;
+    --border:        #dde4ec;
+    --border-strong: #c3cedb;
+
+    --text:          #16202c;
+    --text-muted:    #5a6472;
+    --text-faint:    #656f7c;
+
+    --accent:        #294172;
+    --accent-hover:  #1d3059;
+    --accent-soft:   #e8edf6;
+    --accent-line:   #a8bade;
+
+    --warn:          #9c5228;
+    --warn-soft:     #fbf0e8;
+    --warn-line:     #e5c3a8;
+    --ok:            #256b46;
+    --ok-soft:       #e6f2ec;
+    --ok-line:       #a9d3bd;
+}
+
+/* ========================================================================== */
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: var(--t-base);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* Mise en page : barre latérale persistante + contenu */
+.shell {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+    min-height: 100vh;
+}
+
+/* ---------- Barre latérale ---------- */
+
+.sidebar {
+    border-right: 1px solid var(--border);
+    background: var(--surface);
+    padding: 1.75rem 1.25rem 3rem;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.75rem;
+}
+
+.brand {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    text-decoration: none;
+    color: var(--text);
+}
+
+.brand strong {
+    font-size: var(--t-md);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.brand span {
+    font-family: var(--mono);
+    font-size: var(--t-xs);
+    color: var(--text-faint);
+}
+
+.nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.nav-title {
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    font-weight: 600;
+    margin-bottom: 0.45rem;
+}
+
+.nav-group a {
+    color: var(--text-muted);
+    text-decoration: none;
+    padding: 0.3rem 0.6rem;
+    border-radius: var(--radius);
+    border-left: 2px solid transparent;
+    font-size: var(--t-base);
+}
+
+.nav-group a:hover {
+    color: var(--text);
+    background: var(--surface-alt);
+}
+
+.nav-group a.current {
+    color: var(--accent);
+    border-left-color: var(--accent);
+    background: var(--accent-soft);
+    font-weight: 500;
+}
+
+.nav-group a code {
+    font-family: var(--mono);
+    font-size: var(--t-sm);
+    background: none;
+    padding: 0;
+    border: none;
+    color: inherit;
+}
+
+/* ---------- Contenu ---------- */
+
+.content {
+    padding: 3rem 3rem 6rem;
+    max-width: 54rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.eyebrow {
+    font-family: var(--mono);
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    font-weight: 600;
+}
+
+h1 {
+    font-size: var(--t-2xl);
+    line-height: 1.15;
+    letter-spacing: -0.025em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+}
+
+h2 {
+    font-size: var(--t-xl);
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    margin: 2rem 0 0;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    text-wrap: balance;
+}
+
+h3 {
+    font-size: var(--t-lg);
+    line-height: 1.3;
+    letter-spacing: -0.01em;
+    font-weight: 600;
+    margin: 1.25rem 0 0;
+    text-wrap: balance;
+}
+
+h4 {
+    font-size: var(--t-md);
+    font-weight: 600;
+    margin: 0.75rem 0 0;
+}
+
+p { margin: 0; max-width: 40em; }
+
+.lede {
+    font-size: var(--t-md);
+    color: var(--text-muted);
+    max-width: 38em;
+}
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:hover { color: var(--accent-hover); }
+
+ul, ol { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.4rem; max-width: 40em; }
+li { padding-left: 0.2rem; }
+li::marker { color: var(--text-faint); }
+
+strong { font-weight: 600; }
+
+code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.08em 0.32em;
+}
+
+/* Blocs de commandes — défilent seuls, jamais la page */
+pre {
+    margin: 0;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    overflow-x: auto;
+    font-size: var(--t-sm);
+    line-height: 1.6;
+}
+
+pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+}
+
+.prompt { color: var(--text-faint); user-select: none; }
+.cmt    { color: var(--text-faint); font-style: italic; }
+.sim    { color: var(--accent); }
+.ok-t   { color: var(--ok); }
+
+/* ---------- Tableaux ---------- */
+
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: var(--t-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+th, td {
+    text-align: left;
+    padding: 0.6rem 0.9rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+}
+
+th {
+    background: var(--surface-alt);
+    font-weight: 600;
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+tbody tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--surface-alt); }
+
+td code { white-space: nowrap; }
+
+/* ---------- Encarts ---------- */
+
+.note {
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-line);
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.note.warn { border-left-color: var(--warn-line); background: var(--warn-soft); }
+.note.safe { border-left-color: var(--ok-line);   background: var(--ok-soft); }
+
+.note-label {
+    font-size: var(--t-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    color: var(--text-muted);
+}
+
+.note.warn .note-label { color: var(--warn); }
+.note.safe .note-label { color: var(--ok); }
+
+.note p, .note ul { font-size: var(--t-sm); }
+
+/* ---------- Cartes d'options ---------- */
+
+.opt {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 1.4rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+    scroll-margin-top: 1.5rem;
+}
+
+.opt-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.opt-head h3 { margin: 0; font-family: var(--mono); font-size: var(--t-md); }
+
+/* L'espacement interne des cartes vient du gap du conteneur : les marges
+   par défaut des titres s'y ajouteraient et doubleraient l'écart. */
+.opt > h3, .opt > h4, .note > p:first-child { margin-top: 0; }
+
+.tag {
+    font-size: var(--t-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 0.1rem 0.45rem;
+    border-radius: 3px;
+    border: 1px solid var(--border-strong);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.tag.root { border-color: var(--warn-line); color: var(--warn); background: var(--warn-soft); }
+.tag.sim  { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }
+
+/* ---------- Grille de cartes ---------- */
+
+.cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1rem;
+}
+
+.card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 1.1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    text-decoration: none;
+    color: inherit;
+}
+
+.card:hover { border-color: var(--accent-line); }
+
+.card h3 { margin: 0; font-size: var(--t-md); }
+.card p  { font-size: var(--t-sm); color: var(--text-muted); }
+.card .cmd { font-family: var(--mono); font-size: var(--t-sm); color: var(--accent); }
+
+/* ---------- Divers ---------- */
+
+.meta {
+    font-size: var(--t-sm);
+    color: var(--text-faint);
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+}
+
+.stack { display: flex; flex-direction: column; gap: 0.9rem; }
+.stack-lg { display: flex; flex-direction: column; gap: 1.5rem; }
+
+footer {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    font-size: var(--t-sm);
+    color: var(--text-faint);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+}
+
+/* ---------- Adaptatif ---------- */
+
+@media (max-width: 62rem) {
+    .shell { grid-template-columns: 1fr; }
+
+    .sidebar {
+        position: static;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 1.25rem 2rem;
+        padding: 1.25rem 1.5rem;
+    }
+
+    .nav-group { flex-direction: row; flex-wrap: wrap; gap: 0.35rem; }
+    .nav-title { width: 100%; margin-bottom: 0.15rem; }
+    .nav-group a { border-left: none; border-bottom: 2px solid transparent; }
+    .nav-group a.current { border-left: none; border-bottom-color: var(--accent); }
+
+    .content { padding: 2rem 1.5rem 4rem; }
+}
+
+@media (max-width: 34rem) {
+    :root { --t-2xl: 1.875rem; --t-xl: 1.5rem; }
+    .content { padding: 1.5rem 1.1rem 3rem; }
+}

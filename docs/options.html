@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Référence des options — Fedora Setup</title>
+<meta name="description" content="Les 27 options de fedora-setup : ce que fait chacune, ce qu'elle modifie et comment revenir en arrière.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="sidebar">
+    <a class="brand" href="index.html">
+        <strong>Fedora Setup</strong>
+        <span>v0.2.1</span>
+    </a>
+
+    <div class="nav-group">
+        <div class="nav-title">Documentation</div>
+        <a href="index.html">Présentation</a>
+        <a href="options.html" class="current">Référence des options</a>
+        <a href="guides.html">Guides d'usage</a>
+        <a href="troubleshooting.html">Dépannage</a>
+    </div>
+
+    <div class="nav-group">
+        <div class="nav-title">Options autonomes</div>
+        <a href="#clean"><code>--clean</code></a>
+        <a href="#memory"><code>--memory</code></a>
+        <a href="#boot"><code>--boot</code></a>
+        <a href="#laptop"><code>--laptop</code></a>
+        <a href="#security"><code>--security</code></a>
+        <a href="#devtools"><code>--devtools</code></a>
+        <a href="#docker"><code>--docker</code></a>
+        <a href="#bashrc"><code>--bashrc</code></a>
+    </div>
+
+    <div class="nav-group">
+        <div class="nav-title">Autres</div>
+        <a href="#tableau">Tableau complet</a>
+        <a href="#transverses">Options transverses</a>
+        <a href="#systeme">Installation système</a>
+    </div>
+</nav>
+
+<main class="content">
+
+    <div class="stack">
+        <div class="eyebrow">Référence</div>
+        <h1>Les options en détail</h1>
+        <p class="lede">
+            Pour chaque option : ce qu'elle fait, ce qu'elle écrit sur le disque,
+            et comment revenir en arrière.
+        </p>
+    </div>
+
+    <h2 id="tableau">Tableau complet</h2>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Option</th><th>Effet</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>-r FICHIER</code></td><td>Liste RPM à utiliser (défaut <code>rpm.list</code>)</td></tr>
+                <tr><td><code>-f FICHIER</code></td><td>Liste Flatpak (défaut <code>flatpak.list</code>)</td></tr>
+                <tr><td><code>-d FICHIER</code></td><td>Liste de dépôts tiers (défaut <code>repos.list</code>)</td></tr>
+                <tr><td><code>-e FICHIER</code></td><td>Liste d'extensions GNOME (défaut <code>gnome-extensions.list</code>)</td></tr>
+                <tr><td><code>--no-update</code></td><td>Sauter les mises à jour RPM et Flatpak</td></tr>
+                <tr><td><code>--no-firmware</code></td><td>Sauter les mises à jour de firmware</td></tr>
+                <tr><td><code>--no-gpu</code></td><td>Sauter les pilotes graphiques</td></tr>
+                <tr><td><code>--no-repos</code></td><td>Ignorer les dépôts tiers</td></tr>
+                <tr><td><code>--no-lists</code></td><td>Ignorer <code>rpm.list</code> et <code>flatpak.list</code></td></tr>
+                <tr><td><code>--no-gnome-ext</code></td><td>Ignorer les extensions GNOME</td></tr>
+                <tr><td><code>-y</code>, <code>--yes</code></td><td>Répondre « oui » à tout (non interactif)</td></tr>
+                <tr><td><code>-q</code>, <code>--quiet</code></td><td>Affichage compact, détails dans le journal</td></tr>
+                <tr><td><code>-n</code>, <code>--dry-run</code></td><td>Simulation, sans <code>sudo</code> requis</td></tr>
+                <tr><td><code>--snapshot</code></td><td>Instantané Btrfs avant modification</td></tr>
+                <tr><td><code>--clean</code></td><td>Nettoyage et maintenance</td></tr>
+                <tr><td><code>--memory</code></td><td>Réglages mémoire pour zram</td></tr>
+                <tr><td><code>--boot</code></td><td>Optimisation du démarrage</td></tr>
+                <tr><td><code>--laptop</code></td><td>Autonomie sur portable</td></tr>
+                <tr><td><code>--security</code></td><td>Vérification et durcissement</td></tr>
+                <tr><td><code>--devtools</code></td><td>Outils de développement</td></tr>
+                <tr><td><code>--docker</code></td><td>Docker CE</td></tr>
+                <tr><td><code>--bashrc</code></td><td>Installer <code>~/.bashrc</code></td></tr>
+                <tr><td><code>--install</code></td><td>Installer la commande système</td></tr>
+                <tr><td><code>--update</code></td><td>Mettre à jour l'installation</td></tr>
+                <tr><td><code>--uninstall</code></td><td>Désinstaller</td></tr>
+                <tr><td><code>-v</code>, <code>--version</code></td><td>Afficher la version</td></tr>
+                <tr><td><code>-h</code>, <code>--help</code></td><td>Afficher l'aide</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2 id="transverses">Options transverses</h2>
+
+    <div class="opt" id="dry-run">
+        <div class="opt-head">
+            <h3>--dry-run</h3>
+            <span class="tag sim">sans sudo</span>
+        </div>
+        <p>
+            Affiche chaque commande au lieu de l'exécuter. S'applique aussi bien
+            au flux principal qu'aux options autonomes.
+        </p>
+<pre><code><span class="prompt">$</span> ./fedora-setup.sh --dry-run           <span class="cmt"># flux complet</span>
+<span class="prompt">$</span> ./fedora-setup.sh --clean --dry-run   <span class="cmt"># une option</span></code></pre>
+        <p>
+            L'ordre n'a pas d'importance : <code>--clean --dry-run</code> et
+            <code>--dry-run --clean</code> sont équivalents.
+        </p>
+        <div class="note safe">
+            <div class="note-label">Pourquoi sans sudo</div>
+            <p>
+                L'intérêt de la simulation est d'auditer le script <em>avant</em>
+                de lui donner les droits root. Le journal est alors écrit dans
+                <code>/tmp</code>. Certains états système restent illisibles sans
+                privilèges, mais la liste des commandes est complète.
+            </p>
+        </div>
+    </div>
+
+    <div class="opt" id="snapshot">
+        <div class="opt-head">
+            <h3>--snapshot</h3>
+            <span class="tag root">root</span>
+        </div>
+        <p>
+            Prend un instantané en lecture seule de <code>/</code> avant toute
+            modification, dans <code>/.snapshots/root_AAAAMMJJ-HHMMSS</code>.
+            Quasi instantané et initialement sans coût en espace, grâce à la
+            copie sur écriture de Btrfs.
+        </p>
+<pre><code><span class="prompt">$</span> sudo btrfs subvolume list /                       <span class="cmt"># lister</span>
+<span class="prompt">$</span> sudo btrfs subvolume delete /.snapshots/root_...  <span class="cmt"># supprimer</span></code></pre>
+        <div class="note warn">
+            <div class="note-label">Ce n'est pas une sauvegarde</div>
+            <p>
+                L'instantané vit sur le même disque et disparaît avec lui. Il
+                protège d'une mise à jour ratée, pas d'une panne matérielle. Sans
+                racine Btrfs, l'option est sans effet et le signale.
+            </p>
+        </div>
+    </div>
+
+    <h2 id="autonomes">Options autonomes</h2>
+
+    <p>
+        Chacune fait son travail puis s'arrête, sans lancer le flux de
+        post-installation. Aucune ne s'exécute d'elle-même.
+    </p>
+
+    <div class="opt" id="clean">
+        <div class="opt-head">
+            <h3>--clean</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            Récupère de l'espace disque et borne ce qui grossit sans limite sur
+            une installation utilisée au quotidien.
+        </p>
+        <ul>
+            <li>Paquets orphelins et cache DNF — souvent près d'un gigaoctet</li>
+            <li>Journal systemd, réduit puis <strong>plafonné à 200 Mo</strong> ; par défaut il peut occuper jusqu'à 10 % de <code>/var</code></li>
+            <li>Anciens noyaux au-delà de la limite</li>
+            <li>Runtimes Flatpak inutilisés</li>
+            <li>Journaux du script : les 10 plus récents sont conservés</li>
+            <li>TRIM du SSD, en vérifiant que <code>fstrim.timer</code> est actif</li>
+        </ul>
+        <p>L'espace récupéré est affiché à la fin.</p>
+        <h4>Écrit</h4>
+        <p><code>/etc/systemd/journald.conf.d/99-fedora-setup.conf</code> (plafond du journal).</p>
+    </div>
+
+    <div class="opt" id="memory">
+        <div class="opt-head">
+            <h3>--memory</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            Fedora active <strong>zram</strong> par défaut — un swap compressé en
+            RAM — mais conserve les valeurs pensées pour un swap sur disque. Or
+            swapper vers zram coûte un cycle de compression, pas une
+            entrée-sortie disque : avec les défauts, le noyau évite un swap
+            devenu bon marché et préfère jeter du cache de pages, ce qui dégrade
+            la réactivité au lieu de l'améliorer.
+        </p>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th>Réglage</th><th>Appliqué</th><th>Défaut</th><th>Raison</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><code>vm.swappiness</code></td><td>180</td><td>60</td><td>Valeur recommandée avec zram</td></tr>
+                    <tr><td><code>vm.vfs_cache_pressure</code></td><td>50</td><td>100</td><td>Garde inodes et dentries plus longtemps</td></tr>
+                    <tr><td><code>vm.dirty_bytes</code></td><td>256 Mo</td><td>20 % RAM</td><td>Évite les à-coups sur grosses copies</td></tr>
+                    <tr><td><code>vm.page-cluster</code></td><td>0</td><td>3</td><td>zram se lit page par page</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p>
+            Vérifie aussi que <code>systemd-oomd</code> est actif : sans lui, une
+            saturation mémoire fige le bureau de longues minutes au lieu de ne
+            perdre qu'une application.
+        </p>
+        <h4>Écrit</h4>
+        <p><code>/etc/sysctl.d/99-fedora-setup-memory.conf</code>. Supprimez ce fichier pour revenir aux valeurs de Fedora.</p>
+        <div class="note warn">
+            <div class="note-label">Sans zram</div>
+            <p>
+                Si zram est absent, le script prévient et demande confirmation :
+                un <code>swappiness</code> élevé solliciterait alors fortement le
+                disque.
+            </p>
+        </div>
+    </div>
+
+    <div class="opt" id="boot">
+        <div class="opt-head">
+            <h3>--boot</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            Mesure le temps de démarrage, liste les services les plus lents, puis
+            propose <strong>une désactivation à la fois</strong>.
+        </p>
+        <ul>
+            <li>
+                <code>NetworkManager-wait-online</code> — retarde l'ouverture de
+                session jusqu'à ce que le réseau réponde. Utile sur un serveur,
+                inutile sur un poste de bureau. Le <strong>coût mesuré sur votre
+                machine</strong> est affiché avant la question.
+            </li>
+            <li><code>cups</code> — proposé uniquement si <strong>aucune imprimante n'est configurée</strong></li>
+            <li><code>bluetooth</code> — proposé uniquement si <strong>aucun contrôleur n'est détecté</strong></li>
+            <li>Délai du menu GRUB, réduit à 1 seconde</li>
+        </ul>
+        <div class="note safe">
+            <div class="note-label">Réversible</div>
+            <p>
+                Les services sont <strong>désactivés, pas masqués</strong> : un
+                <code>sudo systemctl enable &lt;service&gt;</code> suffit à revenir
+                en arrière. Le fichier GRUB est sauvegardé en
+                <code>/etc/default/grub.bak</code>.
+            </p>
+        </div>
+        <div class="note">
+            <div class="note-label">Pourquoi 1 seconde et pas 0</div>
+            <p>
+                À zéro, le menu GRUB devient inatteignable — et donc aussi le
+                démarrage sur un noyau antérieur, précisément ce dont on a besoin
+                quand une mise à jour s'est mal passée.
+            </p>
+        </div>
+    </div>
+
+    <div class="opt" id="laptop">
+        <div class="opt-head">
+            <h3>--laptop</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            Réservé aux machines sur batterie, détectée automatiquement. Sur un
+            poste fixe, le script demande confirmation : ces réglages échangent
+            des performances contre de l'autonomie.
+        </p>
+        <h4>Gestionnaire d'énergie</h4>
+        <p>
+            TLP et <code>power-profiles-daemon</code> pilotent les mêmes réglages
+            du noyau et <strong>se contredisent s'ils tournent ensemble</strong>.
+            Le script n'en installe qu'un.
+        </p>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr><th></th><th>power-profiles-daemon</th><th>TLP</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>Intégration GNOME</td><td>Sélecteur de profil dans le menu système</td><td>Remplace ce sélecteur</td></tr>
+                    <tr><td>Réglages</td><td>Prudents, non configurables</td><td>Agressifs, très configurables</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <p>Si TLP est choisi alors que PPD est présent, ce dernier est masqué pour éviter le conflit.</p>
+        <h4>thermald</h4>
+        <p>
+            Sur processeur Intel : gestion thermique fine. Sans lui, le noyau ne
+            réagit qu'aux seuils matériels, plus tardifs et plus brutaux.
+        </p>
+        <h4>powertop</h4>
+        <p>Propose une unité systemd appliquant <code>--auto-tune</code> à chaque démarrage.</p>
+        <div class="note warn">
+            <div class="note-label">Périphériques USB</div>
+            <p>
+                L'auto-tune active l'économie d'énergie sur les ports USB :
+                certaines souris, claviers ou webcams peuvent se déconnecter par
+                moments. L'option est donc proposée en dernier et reste
+                réversible :
+                <code>sudo systemctl disable --now powertop-autotune</code>.
+            </p>
+        </div>
+    </div>
+
+    <div class="opt" id="security">
+        <div class="opt-head">
+            <h3>--security</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            <strong>Constate puis propose</strong> — rien n'est durci de force. Un
+            pare-feu trop strict ou un résolveur mal choisi casse la connectivité
+            de façon difficile à diagnostiquer.
+        </p>
+        <ul>
+            <li>
+                <strong>SELinux</strong> — signale l'état. Le script ne tente
+                jamais de le réactiver depuis <code>Disabled</code> : cela impose
+                un réétiquetage complet du disque.
+            </li>
+            <li>
+                <strong>Pare-feu</strong> — vérifie <code>firewalld</code> et
+                affiche la zone. Si c'est <code>FedoraWorkstation</code>, signale
+                qu'elle laisse ouverts les ports UDP 1025-65535.
+            </li>
+            <li>
+                <strong>Mises à jour automatiques</strong> — configurées en
+                téléchargement et notification uniquement, jamais en installation
+                silencieuse, qui peut redémarrer des services en pleine session.
+            </li>
+            <li>
+                <strong>DNS-over-TLS</strong> — chiffre les requêtes via Quad9, en
+                mode opportuniste.
+            </li>
+        </ul>
+        <div class="note safe">
+            <div class="note-label">Garde-fou DNS</div>
+            <p>
+                Si votre résolveur actuel est une adresse privée
+                (<code>10.x</code>, <code>192.168.x</code>,
+                <code>172.16-31.x</code>), c'est un DNS local — box ou réseau
+                d'entreprise — qui résout des noms internes. Le remplacer casserait
+                cet accès : l'étape est alors <strong>ignorée
+                automatiquement</strong>.
+            </p>
+        </div>
+        <div class="note">
+            <div class="note-label">Pourquoi le mode opportuniste</div>
+            <p>
+                En mode strict, un portail captif ou un réseau bloquant le port
+                853 rendrait toute résolution impossible.
+            </p>
+        </div>
+    </div>
+
+    <div class="opt" id="devtools">
+        <div class="opt-head">
+            <h3>--devtools</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>Chaque outil est proposé séparément : ils sont volumineux et n'ont d'intérêt que selon l'usage réel.</p>
+        <ul>
+            <li>
+                <strong>distrobox</strong> — conteneurs de développement jetables
+                avec accès au dossier personnel. Fedora fournit déjà
+                <code>toolbox</code>, qui fait de même mais uniquement avec des
+                images Fedora ; distrobox accepte n'importe quelle distribution.
+                Les deux peuvent cohabiter.
+            </li>
+            <li>
+                <strong>Virtualisation KVM</strong> — <code>qemu-kvm</code>,
+                <code>libvirt</code>, <code>virt-manager</code>. Le support
+                VT-x / AMD-V est vérifié d'abord ; l'utilisateur est ajouté au
+                groupe <code>libvirt</code>, faute de quoi
+                <code>virt-manager</code> réclame le mot de passe root à chaque
+                lancement.
+            </li>
+            <li>
+                <strong>Polices</strong> — Liberation, Noto (emoji et CJK),
+                Fira Code et JetBrains Mono.
+            </li>
+        </ul>
+        <div class="note">
+            <div class="note-label">Polices Microsoft</div>
+            <p>
+                Seules des polices librement redistribuables sont installées :
+                les polices Microsoft exigeraient un téléchargement externe et
+                l'acceptation d'une licence.
+            </p>
+        </div>
+    </div>
+
+    <div class="opt" id="docker">
+        <div class="opt-head">
+            <h3>--docker</h3>
+            <span class="tag root">root</span>
+        </div>
+        <p>
+            Installe <strong>Docker CE depuis le dépôt officiel</strong>
+            (<code>download.docker.com</code>) plutôt que <code>moby-engine</code>
+            des dépôts Fedora : c'est la version documentée par Docker, et la
+            seule à fournir <code>buildx</code> et <code>compose</code> v2 en
+            plugins.
+        </p>
+        <ol>
+            <li>Ajoute le dépôt <code>docker-ce</code></li>
+            <li>Supprime les paquets Fedora en conflit (<code>moby-engine</code>, <code>docker</code>…), qui fournissent les mêmes binaires</li>
+            <li>Installe le moteur, la CLI, containerd et les plugins buildx et compose</li>
+            <li>Ajoute l'utilisateur réel au groupe <code>docker</code></li>
+            <li>Valide avec <code>docker run --rm hello-world</code></li>
+        </ol>
+        <div class="note warn">
+            <div class="note-label">Le groupe docker équivaut à un accès root</div>
+            <p>
+                Le démon tourne en root et n'importe quel conteneur peut monter le
+                système de fichiers hôte. C'est le compromis standard pour utiliser
+                <code>docker</code> sans <code>sudo</code> ; sinon, retirez-vous du
+                groupe avec <code>sudo gpasswd -d $USER docker</code>. Le changement
+                prend effet après déconnexion et reconnexion.
+            </p>
+        </div>
+        <p>
+            Le service est démarré pour la session courante mais
+            <strong>n'est pas activé au démarrage</strong> — ce choix vous
+            revient : <code>sudo systemctl enable --now docker</code>.
+        </p>
+    </div>
+
+    <div class="opt" id="bashrc">
+        <div class="opt-head">
+            <h3>--bashrc</h3>
+            <span class="tag root">root</span>
+        </div>
+        <p>
+            Installe <code>bashrc.example</code> comme <code>~/.bashrc</code> de
+            l'utilisateur réel — prompt coloré avec branche git, configuration
+            <code>nvm</code>, <code>PATH</code> personnalisé.
+        </p>
+        <p>
+            L'ancien fichier est <strong>sauvegardé en
+            <code>~/.bashrc.bak</code></strong> s'il existe et diffère du gabarit.
+        </p>
+    </div>
+
+    <h2 id="systeme">Installation système</h2>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Option</th><th>Effet</th><th>Touche aux listes ?</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>--install</code></td>
+                    <td>Copie ou clone le projet dans <code>/opt/fedora-setup</code>, crée le lien dans le <code>PATH</code></td>
+                    <td>Oui — les régénère depuis les gabarits</td>
+                </tr>
+                <tr>
+                    <td><code>--update</code></td>
+                    <td>Bascule sur la dernière release taggée</td>
+                    <td>Non, jamais</td>
+                </tr>
+                <tr>
+                    <td><code>--uninstall</code></td>
+                    <td>Supprime la commande et <code>/opt/fedora-setup</code></td>
+                    <td>Supprime tout le dossier</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p>Les journaux dans <code>/var/log/fedora-setup_*.log</code> sont conservés après désinstallation.</p>
+
+    <footer>
+        <div>Fedora Setup — <a href="index.html">retour à la présentation</a></div>
+    </footer>
+
+</main>
+</div>
+</body>
+</html>
