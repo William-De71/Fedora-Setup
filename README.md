@@ -23,15 +23,26 @@ et s'adapte donc à n'importe quel PC (NVIDIA, AMD, Intel, ou hybride).
    `gnome-extensions.list`, via `gnome-extensions-cli`.
 8. Propose un **redémarrage** si nécessaire (`dnf needs-restarting`).
 
-À la demande uniquement (hors flux principal) : **Docker CE** via `--docker`.
-
 Le script est **idempotent** : il peut être relancé sans risque, il ne refait
 que ce qui est nécessaire.
 
-En complément, deux options dédiées (voir plus bas) ne sont **jamais** exécutées
+En complément, des options dédiées (voir plus bas) ne sont **jamais** exécutées
 automatiquement, uniquement sur demande explicite :
-- `--bashrc` : installe un `~/.bashrc` personnalisé ;
-- `--docker` : installe et configure Docker CE.
+
+| Option | Rôle |
+|---|---|
+| `--bashrc` | Installe un `~/.bashrc` personnalisé |
+| `--docker` | Installe et configure Docker CE |
+| `--clean` | Récupère de l'espace disque (cache, journal, vieux noyaux) |
+| `--memory` | Adapte les réglages mémoire du noyau au swap zram |
+| `--boot` | Analyse le démarrage et propose d'en retirer le superflu |
+| `--laptop` | Optimise l'autonomie sur un portable |
+| `--security` | Vérifie et renforce les protections de base |
+| `--devtools` | Installe conteneurs de dev, virtualisation et polices |
+
+Enfin, deux options transverses s'appliquent au flux principal :
+`--dry-run` (tout simuler sans rien modifier) et `--snapshot`
+(instantané Btrfs avant modification).
 
 ## Installation en tant que commande système
 
@@ -157,13 +168,25 @@ sudo fedora-setup
 | `--no-gnome-ext` | Ne pas traiter `gnome-extensions.list` |
 | `-y`, `--yes` | Répondre « oui » à toutes les questions (non interactif) |
 | `-q`, `--quiet` | Affichage compact (OK/ERREUR), détails dans le log uniquement |
+| `-n`, `--dry-run` | **Simulation** : affiche les commandes sans rien exécuter (voir plus bas) |
+| `--snapshot` | Instantané Btrfs de `/` avant toute modification (voir plus bas) |
 | `-v`, `--version` | Afficher la version du script |
 | `--install` | Installer la commande système `fedora-setup` (voir plus haut) |
 | `--update` | Mettre à jour l'installation système (nécessite un remote git) |
 | `--uninstall` | Désinstaller la commande et `/opt/fedora-setup` |
 | `--bashrc` | Installer `~/.bashrc` depuis `bashrc.example` (voir plus bas) |
 | `--docker` | Installer et configurer Docker CE (voir plus bas) |
+| `--clean` | Nettoyage : cache DNF, journal, vieux noyaux, TRIM (voir plus bas) |
+| `--memory` | Régler la mémoire du noyau pour le swap zram (voir plus bas) |
+| `--boot` | Analyser et accélérer le démarrage (voir plus bas) |
+| `--laptop` | Autonomie : TLP/PPD, thermald, powertop (voir plus bas) |
+| `--security` | Vérifier SELinux, pare-feu, MAJ auto, DNS (voir plus bas) |
+| `--devtools` | distrobox, virtualisation KVM, polices (voir plus bas) |
 | `-h`, `--help` | Afficher l'aide |
+
+> Les six dernières options (`--clean` à `--devtools`) sont **autonomes** :
+> chacune fait son travail puis s'arrête, sans lancer le flux de
+> post-installation. Elles ne sont **jamais** exécutées automatiquement.
 
 Par défaut, la sortie des commandes est affichée en direct à l'écran (mode
 verbeux). Utilisez `-q` pour un affichage compact.
@@ -316,6 +339,223 @@ sudo systemctl enable --now docker   # démarrage automatique au boot
 
 Comme `--bashrc`, cette étape ne fait **pas** partie du flux principal : un
 `sudo fedora-setup` classique n'installe jamais Docker.
+
+## Simulation (`--dry-run`)
+
+Le script enchaîne des centaines de commandes, dont beaucoup modifient le
+système en profondeur. `--dry-run` affiche **exactement ce qui serait exécuté**,
+sans rien exécuter :
+
+```bash
+./fedora-setup.sh --dry-run              # flux complet, simulé
+./fedora-setup.sh --clean --dry-run      # une option précise, simulée
+```
+
+Chaque commande apparaît précédée de `$`, et un récapitulatif final indique
+combien auraient été lancées :
+
+```
+    Suppression des paquets orphelins : simulé
+        $ dnf autoremove -y
+
+==> Récapitulatif
+    Mode simulation : 7 commande(s) affichée(s), aucune exécutée.
+```
+
+> **Utilisable sans `sudo`.** C'est volontaire : l'intérêt de `--dry-run` est
+> justement d'**auditer le script avant de lui confier les droits root**. Dans
+> ce cas le journal est écrit dans `/tmp` au lieu de `/var/log`. Certains états
+> restent illisibles sans privilèges, mais la liste des commandes est complète.
+
+L'ordre des options n'a aucune importance : `--clean --dry-run` et
+`--dry-run --clean` sont équivalents.
+
+## Instantané Btrfs (`--snapshot`)
+
+Si la racine est en **Btrfs** (le cas par défaut sur Fedora Workstation),
+`--snapshot` prend un instantané en lecture seule de `/` **avant toute
+modification** :
+
+```bash
+sudo fedora-setup --snapshot          # instantané, puis exécution normale
+```
+
+L'opération est quasi instantanée et n'occupe initialement aucun espace (copie
+sur écriture), ce qui en fait un filet de sécurité peu coûteux avant une grosse
+mise à jour ou un changement de pilote graphique. L'instantané est rangé dans
+`/.snapshots/root_YYYYMMDD-HHMMSS`.
+
+```bash
+sudo btrfs subvolume list /                       # lister
+sudo btrfs subvolume delete /.snapshots/root_...  # supprimer
+```
+
+> ⚠️ **Un instantané n'est pas une sauvegarde** : il vit sur le même disque et
+> disparaît avec lui. Il protège d'une mise à jour ratée, pas d'une panne
+> matérielle.
+>
+> Sur un système de fichiers autre que Btrfs (ext4, xfs), l'option est sans
+> effet et le signale.
+
+## Nettoyage et maintenance (`--clean`)
+
+Récupère de l'espace disque et **borne ce qui grossit sans limite** sur une
+installation utilisée au quotidien :
+
+```bash
+sudo fedora-setup --clean
+```
+
+1. **Paquets orphelins** (`dnf autoremove`) et **cache DNF** (souvent ~1 Go) ;
+2. **Journal systemd** : réduit immédiatement, puis **plafonné à 200 Mo** de
+   façon permanente (par défaut il peut occuper jusqu'à 10 % de `/var`, soit
+   plusieurs gigaoctets) ;
+3. **Anciens noyaux** au-delà de la limite ;
+4. **Runtimes Flatpak** devenus inutiles ;
+5. **Journaux du script lui-même** : les 10 plus récents sont conservés (ils
+   n'avaient jusqu'ici aucune rotation et s'accumulaient indéfiniment) ;
+6. **TRIM** du SSD, en vérifiant que `fstrim.timer` est bien actif.
+
+L'espace récupéré est affiché à la fin. Le flux principal configure par ailleurs
+`installonly_limit=2` dans `/etc/dnf/dnf.conf`, pour que Fedora ne conserve que
+2 noyaux au lieu de 3.
+
+## Réactivité mémoire (`--memory`)
+
+Fedora active **zram** par défaut (swap compressé en RAM), mais conserve les
+valeurs `sysctl` pensées pour un swap **sur disque**. Or les deux n'ont rien à
+voir : swapper vers zram coûte un cycle CPU de compression, pas une
+entrée-sortie disque. Résultat, le noyau évite un swap devenu bon marché et
+préfère jeter du cache de pages — ce qui **dégrade** la réactivité.
+
+```bash
+sudo fedora-setup --memory
+```
+
+Écrit un drop-in `/etc/sysctl.d/99-fedora-setup-memory.conf` :
+
+| Réglage | Valeur | Défaut | Pourquoi |
+|---|---|---|---|
+| `vm.swappiness` | `180` | `60` | Valeur recommandée avec zram |
+| `vm.vfs_cache_pressure` | `50` | `100` | Garde inodes et dentries plus longtemps |
+| `vm.dirty_bytes` | 256 Mo | 20 % RAM | Évite les à-coups sur grosses copies |
+| `vm.page-cluster` | `0` | `3` | zram se lit page par page |
+
+Vérifie aussi que **`systemd-oomd`** est actif : sans lui, une saturation
+mémoire fige le bureau de longues minutes au lieu de ne perdre qu'une
+application.
+
+> Si zram est absent, le script **prévient et demande confirmation** : un
+> `swappiness` élevé solliciterait alors fortement le disque.
+
+## Optimisation du démarrage (`--boot`)
+
+Analyse le temps de démarrage et propose, **une désactivation à la fois** :
+
+```bash
+sudo fedora-setup --boot
+```
+
+- **`NetworkManager-wait-online`** : retarde l'ouverture de session jusqu'à ce
+  que le réseau réponde — utile sur un serveur, inutile sur un poste de bureau.
+  Le script affiche le **coût mesuré** sur votre machine avant de demander ;
+- **`cups`** : proposé **uniquement si aucune imprimante n'est configurée** ;
+- **`bluetooth`** : proposé **uniquement si aucun contrôleur n'est détecté** ;
+- **Délai du menu GRUB** : réduit à 1 seconde (pas 0 — à 0 le menu devient
+  inatteignable, ce qui complique le démarrage sur un noyau antérieur en cas de
+  problème). L'ancien fichier est sauvegardé en `/etc/default/grub.bak`.
+
+> Les services sont **désactivés, pas masqués** : un simple
+> `sudo systemctl enable <service>` suffit à revenir en arrière.
+>
+> Les garde-fous ci-dessus évitent de casser une configuration qui marche : sur
+> une machine avec imprimante et Bluetooth, ces deux services ne sont jamais
+> proposés.
+
+## Portable et autonomie (`--laptop`)
+
+Réservé aux machines **sur batterie** (détectée automatiquement ; sur un poste
+fixe le script demande confirmation, ces réglages échangeant des performances
+contre de l'autonomie).
+
+```bash
+sudo fedora-setup --laptop
+```
+
+**Gestionnaire d'énergie** — TLP et `power-profiles-daemon` pilotent les mêmes
+réglages du noyau et **se contredisent s'ils tournent ensemble**. Le script
+explique le compromis et n'en installe **qu'un seul** :
+
+| | `power-profiles-daemon` | TLP |
+|---|---|---|
+| Intégration GNOME | Sélecteur de profil dans le menu système | Remplace ce sélecteur |
+| Réglages | Prudents, non configurables | Agressifs, très configurables |
+
+Si TLP est choisi alors que PPD est présent, ce dernier est **masqué** pour
+éviter le conflit.
+
+**thermald** (processeurs Intel) : gestion thermique fine ; sans lui, le noyau
+ne réagit qu'aux seuils matériels, plus tardifs et plus brutaux.
+
+**powertop** : propose une unité systemd appliquant `--auto-tune` à chaque
+démarrage.
+
+> ⚠️ L'auto-tune de powertop active l'économie d'énergie sur les **ports USB** :
+> certaines souris, claviers ou webcams peuvent se déconnecter par moments.
+> C'est pourquoi l'option est proposée en dernier, clairement signalée, et
+> réversible (`sudo systemctl disable --now powertop-autotune`).
+
+## Sécurité et réseau (`--security`)
+
+**Constate puis propose** — rien n'est durci de force, un pare-feu trop strict
+ou un résolveur DNS mal choisi cassant la connectivité de façon difficile à
+diagnostiquer.
+
+```bash
+sudo fedora-setup --security
+```
+
+- **SELinux** : signale l'état (`Enforcing` / `Permissive` / `Disabled`). Le
+  script ne tente **jamais** de le réactiver depuis `Disabled` : cela impose un
+  réétiquetage complet du disque, à faire en connaissance de cause ;
+- **Pare-feu** : vérifie que `firewalld` tourne et affiche la zone active. Si
+  c'est `FedoraWorkstation`, signale qu'elle laisse ouverts les **ports UDP
+  1025-65535** (partage et découverte réseau) — un compromis discutable sur un
+  Wi-Fi public ;
+- **Mises à jour automatiques** : configurées en **téléchargement + notification
+  uniquement**, jamais en installation silencieuse (qui peut redémarrer des
+  services en pleine session) ;
+- **DNS-over-TLS** : propose de chiffrer les requêtes DNS via Quad9, en mode
+  `opportunistic` (le mode strict rend la résolution impossible derrière un
+  portail captif ou un réseau bloquant le port 853).
+
+> **Garde-fou DNS** : si votre résolveur actuel est une **adresse privée**
+> (`10.x`, `192.168.x`, `172.16-31.x`), c'est un DNS local — box ou réseau
+> d'entreprise — qui résout des noms internes. Le remplacer casserait cet
+> accès : l'étape est alors **ignorée automatiquement**.
+
+## Outils de développement (`--devtools`)
+
+Chaque outil est proposé séparément (ils sont volumineux et n'ont d'intérêt que
+selon l'usage réel) :
+
+```bash
+sudo fedora-setup --devtools
+```
+
+- **distrobox** : conteneurs de développement jetables, avec accès au dossier
+  personnel. Fedora fournit déjà `toolbox`, qui fait de même mais **uniquement
+  avec des images Fedora**, là où distrobox accepte n'importe quelle
+  distribution (Ubuntu, Arch, Debian…). Les deux peuvent cohabiter ;
+- **Virtualisation KVM** : `qemu-kvm`, `libvirt`, `virt-manager`. Le script
+  vérifie d'abord le support **VT-x / AMD-V** (sans lui, les machines virtuelles
+  seraient émulées et très lentes) et ajoute l'utilisateur au groupe `libvirt`,
+  faute de quoi `virt-manager` réclame le mot de passe root à chaque lancement ;
+- **Polices** : Liberation (équivalents libres d'Arial/Times/Courier), Noto
+  (emoji et CJK), Fira Code et JetBrains Mono (programmation).
+
+> Seules des polices **librement redistribuables** sont installées : les polices
+> Microsoft exigeraient un téléchargement externe et l'acceptation d'une licence.
 
 ## Journal
 
