@@ -13,6 +13,7 @@
 #                   (NVIDIA, AMD, Intel — y compris hybride type Optimus)
 #                 - Installe/supprime des paquets RPM et Flatpak d'après
 #                   des fichiers de listes externes (rpm.list / flatpak.list)
+#                 - Installe Docker CE sur demande (--docker)
 #
 #  LISTES       : une entrée par ligne, syntaxe :
 #                     add:paquet   -> installe le paquet
@@ -45,7 +46,15 @@ set -u -o pipefail
 SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 SCRIPT_NAME="$(basename "$SCRIPT_PATH")"
-LOG_FILE="/var/log/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
+
+# /var/log n'est accessible en écriture qu'à root. Le script s'exécute
+# normalement via sudo, mais --dry-run est utilisable sans privilèges (pour
+# auditer ce qui serait fait) : dans ce cas le journal va dans /tmp.
+if [[ $(id -u) -eq 0 ]]; then
+    LOG_FILE="/var/log/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
+else
+    LOG_FILE="${TMPDIR:-/tmp}/fedora-setup_$(date '+%Y%m%d-%H%M%S').log"
+fi
 readonly SCRIPT_PATH SCRIPT_DIR SCRIPT_NAME LOG_FILE
 
 # Version du script (affichée par -v/--version et au démarrage)
@@ -77,6 +86,19 @@ DO_LISTS=1         # Traitement des listes rpm.list / flatpak.list
 DO_GNOME_EXT=1     # Traitement de la liste gnome-extensions.list
 VERBOSE=1          # Affiche la sortie des commandes au lieu du seul log
 ASSUME_YES=0       # Répondre « oui » automatiquement (--yes) : aucune question
+DRY_RUN=0          # Simulation : affiche les commandes sans les exécuter
+DO_SNAPSHOT=0      # Instantané Btrfs avant modification (--snapshot)
+
+# Action autonome demandée (--clean, --memory…) : nom de la fonction à
+# appeler après le parsing, au lieu du traitement principal. Vide = flux
+# normal de post-installation.
+ACTION=""
+
+# Compteurs alimentés par run(), utilisés par le récapitulatif final.
+COUNT_OK=0
+COUNT_FAIL=0
+COUNT_SKIPPED=0
+FAILED_ACTIONS=()
 
 # Renseigné par gpu_detect() : chaîne lspci des contrôleurs graphiques
 GPU_INFO=""
@@ -120,9 +142,20 @@ error() {
 #   $1 : libellé lisible de l'action
 #   $@ : la commande et ses arguments
 # Retourne le code de la commande (permet un traitement en aval si besoin).
+#
+# En mode simulation (--dry-run), la commande est affichée et journalisée
+# mais jamais exécutée, et le résultat est compté comme « simulé ».
 run() {
     local label="$1"; shift
     local rc
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo -e "    ${label} : ${C_BLUE}simulé${C_RESET}"
+        echo -e "        ${C_BOLD}\$${C_RESET} $*"
+        log "DRY-RUN: $*"
+        COUNT_SKIPPED=$((COUNT_SKIPPED + 1))
+        return 0
+    fi
 
     echo -ne "    ${label} : "
     log "CMD: $*"
@@ -139,8 +172,14 @@ run() {
 
     if [[ $rc -eq 0 ]]; then
         echo -e "${C_GREEN}OK${C_RESET}"
+        COUNT_OK=$((COUNT_OK + 1))
     else
         echo -e "${C_RED}ERREUR${C_RESET} (voir $LOG_FILE)"
+        COUNT_FAIL=$((COUNT_FAIL + 1))
+        # Mémorisé pour le récapitulatif final : sans cela, une erreur
+        # survenue en début de traitement disparaît sous des centaines de
+        # lignes de sortie dnf.
+        FAILED_ACTIONS+=("$label")
     fi
     return "$rc"
 }
@@ -174,6 +213,35 @@ has_cmd() {
     command -v "$1" &> /dev/null
 }
 
+# Préambule commun aux options autonomes (--clean, --memory, --boot…) :
+# vérifie les droits, la distribution et prépare le journal.
+#   $1 : nom de l'option (pour le message d'erreur)
+#   $2 : titre affiché en en-tête
+#
+# En simulation, l'absence de droits root n'est pas bloquante : aucune
+# commande n'étant exécutée, on veut pouvoir auditer l'option sans sudo.
+require_root_for() {
+    local opt="$1" title="$2"
+
+    if [[ $(id -u) -ne 0 && $DRY_RUN -eq 0 ]]; then
+        error "Cette opération nécessite les droits root : sudo ${CMD_NAME} ${opt}"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — ${title} ===${C_RESET}"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo -e "${C_BLUE}Mode simulation : aucune modification ne sera appliquée.${C_RESET}"
+    fi
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+}
+
 usage() {
     cat << EOF
 Usage : sudo ./${SCRIPT_NAME} [options]
@@ -195,6 +263,11 @@ Options :
   --no-gnome-ext  Ne pas traiter la liste gnome-extensions.list
   -y, --yes       Répondre « oui » à toutes les questions (non interactif)
   -q, --quiet     Affichage compact (OK/ERREUR), détails uniquement dans le log
+  -n, --dry-run   Simulation : affiche les commandes sans rien exécuter.
+                  Utilisable sans sudo, pour auditer ce que ferait le script.
+  --snapshot      Créer un instantané Btrfs de / avant toute modification
+                  (filet de sécurité en cas de mise à jour ratée ; sans
+                  effet si la racine n'est pas en Btrfs)
   -v, --version   Afficher la version du script
   -h, --help      Afficher cette aide
 
@@ -217,6 +290,61 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   bashrc.example, en sauvegardant l'ancien en ~/.bashrc.bak
                   si présent et différent. N'est jamais exécuté
                   automatiquement, uniquement sur demande explicite.
+  --docker        Installer et configurer Docker CE depuis le dépôt officiel
+                  (moteur, CLI, containerd, plugins buildx et compose),
+                  ajouter \$SUDO_USER au groupe docker et valider avec
+                  l'image hello-world. N'est jamais exécuté automatiquement.
+
+Nettoyage & maintenance :
+  --clean         Récupérer de l'espace disque : paquets orphelins, cache
+                  DNF, journal systemd (plafonné à ${JOURNAL_MAX_SIZE}),
+                  anciens noyaux, runtimes Flatpak inutilisés, anciens
+                  journaux du script (${SETUP_LOG_KEEP} conservés) et TRIM
+                  du SSD. Affiche l'espace récupéré. N'est jamais exécuté
+                  automatiquement.
+
+Réactivité du système :
+  --memory        Adapter les réglages mémoire du noyau au swap zram de
+                  Fedora : vm.swappiness=180 (au lieu de 60, pensé pour un
+                  swap sur disque), cache de métadonnées conservé plus
+                  longtemps, écritures en attente bornées pour éviter les
+                  à-coups d'E/S. Vérifie aussi systemd-oomd. Écrit dans
+                  ${SYSCTL_CONF}. N'est jamais exécuté automatiquement.
+
+Optimisation du démarrage :
+  --boot          Analyser le temps de démarrage et proposer, une par une,
+                  les désactivations utiles : NetworkManager-wait-online
+                  (plusieurs secondes perdues sur un poste de bureau), cups
+                  si aucune imprimante n'est configurée, bluetooth si aucun
+                  contrôleur n'est présent, et réduction du délai du menu
+                  GRUB. Les services sont désactivés, pas masqués : un
+                  « systemctl enable » suffit à revenir en arrière.
+                  N'est jamais exécuté automatiquement.
+
+Portable / autonomie :
+  --laptop        Optimiser l'autonomie : choix du gestionnaire d'énergie
+                  (TLP ou power-profiles-daemon — jamais les deux, ils se
+                  contredisent), thermald sur processeur Intel, et réglages
+                  powertop optionnels. Détecte la batterie et demande
+                  confirmation sur un poste fixe. N'est jamais exécuté
+                  automatiquement.
+
+Sécurité & réseau :
+  --security      Vérifier et renforcer les protections de base : état de
+                  SELinux, pare-feu firewalld et zone appliquée, mises à
+                  jour de sécurité automatiques (téléchargement et
+                  notification, jamais d'installation silencieuse) et
+                  DNS-over-TLS. Constate et propose, ne durcit jamais sans
+                  confirmation. N'est jamais exécuté automatiquement.
+
+Outils de développement :
+  --devtools      Proposer, un par un : distrobox (conteneurs de
+                  développement jetables, toutes distributions), la
+                  virtualisation KVM/libvirt/virt-manager (vérifie le
+                  support VT-x/AMD-V et ajoute l'utilisateur au groupe
+                  libvirt) et des polices libres (Liberation, Noto,
+                  Fira Code, JetBrains Mono).
+                  N'est jamais exécuté automatiquement.
 
 Listes réelles vs gabarits :
   Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
@@ -258,6 +386,10 @@ ensure_lists_from_examples() {
     for dest in "$RPM_LIST" "$FLATPAK_LIST" "$REPOS_LIST" "$GNOME_EXT_LIST"; do
         example="${dest}.example"
         if [[ ! -f "$dest" && -f "$example" ]]; then
+            if [[ $DRY_RUN -eq 1 ]]; then
+                info "${C_BLUE}simulé${C_RESET} : créerait $(basename "$dest") depuis $(basename "$example")"
+                continue
+            fi
             install -m 644 "$example" "$dest"
             info "Créé $(basename "$dest") depuis $(basename "$example")"
         fi
@@ -266,10 +398,18 @@ ensure_lists_from_examples() {
 
 checks() {
     # Le script doit être lancé en root (via sudo) : dnf, fwupd et les
-    # installations flatpak --system l'exigent.
+    # installations flatpak --system l'exigent. En simulation, aucune de ces
+    # commandes n'est exécutée : on autorise donc l'exécution sans sudo,
+    # précisément pour permettre d'auditer le script avant de lui confier
+    # les droits root.
     if [[ $(id -u) -ne 0 ]]; then
-        error "Ce script doit être lancé avec les droits root : sudo ./${SCRIPT_NAME}"
-        exit 1
+        if [[ $DRY_RUN -eq 0 ]]; then
+            error "Ce script doit être lancé avec les droits root : sudo ./${SCRIPT_NAME}"
+            exit 1
+        fi
+        info "${C_YELLOW}Simulation sans droits root : certains états (paquets${C_RESET}"
+        info "${C_YELLOW}installés, services) restent lisibles, mais l'exécution${C_RESET}"
+        info "${C_YELLOW}réelle nécessitera sudo.${C_RESET}"
     fi
 
     # On ne cible que Fedora (le script utilise dnf, rpmfusion, etc.)
@@ -286,8 +426,10 @@ checks() {
         exit 1
     fi
 
-    # Les fichiers de listes doivent exister si on doit les traiter
-    if [[ $DO_LISTS -eq 1 ]]; then
+    # Les fichiers de listes doivent exister si on doit les traiter.
+    # En simulation, leur création a seulement été annoncée : exiger leur
+    # présence ferait échouer un dry-run lancé sur une copie fraîche du dépôt.
+    if [[ $DO_LISTS -eq 1 && $DRY_RUN -eq 0 ]]; then
         for f in "$RPM_LIST" "$FLATPAK_LIST"; do
             if [[ ! -f "$f" ]]; then
                 error "Fichier de liste introuvable : $f"
@@ -321,6 +463,7 @@ configure_dnf() {
     dnf_conf_set "max_parallel_downloads" "10"   # téléchargements parallèles
     dnf_conf_set "fastestmirror" "true"          # sélection du miroir le plus rapide
     dnf_conf_set "countme" "false"               # pas de statistiques d'usage
+    dnf_conf_set "installonly_limit" "2"         # 2 noyaux conservés au lieu de 3
 }
 
 #===============================================================================
@@ -551,6 +694,19 @@ process_list() {
     local file="$1" type="$2"
     local line action pkg
 
+    # En simulation, le fichier de liste peut n'avoir été que « créé »
+    # symboliquement : on se rabat alors sur le gabarit correspondant pour
+    # montrer malgré tout ce qui serait installé.
+    if [[ ! -f "$file" ]]; then
+        if [[ $DRY_RUN -eq 1 && -f "${file}.example" ]]; then
+            info "${C_BLUE}simulé${C_RESET} : lecture de $(basename "${file}.example")"
+            file="${file}.example"
+        else
+            info "Fichier introuvable : $file — étape ignorée."
+            return 0
+        fi
+    fi
+
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Nettoyage : espaces autour, commentaires, lignes vides
         line="${line#"${line%%[![:space:]]*}"}"   # trim gauche
@@ -701,6 +857,999 @@ install_gnome_extensions() {
 }
 
 #===============================================================================
+# NETTOYAGE & MAINTENANCE (--clean)
+#
+# Récupère de l'espace disque et borne ce qui grossit sans limite sur une
+# installation Fedora utilisée au quotidien :
+#   - paquets orphelins (dnf autoremove) et cache DNF (souvent ~1 Go)
+#   - journal systemd (par défaut plafonné à 10 % de /var, soit plusieurs Go)
+#   - anciens noyaux au-delà de installonly_limit
+#   - runtimes Flatpak inutilisés
+#   - propres journaux du script, qui n'avaient aucune rotation
+#   - TRIM du SSD
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --clean.
+#===============================================================================
+
+# Taille maximale conservée pour le journal systemd (persistant).
+readonly JOURNAL_MAX_SIZE="200M"
+readonly JOURNALD_CONF="/etc/systemd/journald.conf.d/99-fedora-setup.conf"
+
+# Nombre de journaux du script à conserver (les plus récents).
+readonly SETUP_LOG_KEEP=10
+
+# Paquets orphelins + cache DNF. « dnf clean packages » ne supprime que les
+# .rpm téléchargés, pas les métadonnées : le prochain dnf reste rapide.
+clean_dnf() {
+    run "Suppression des paquets orphelins" dnf autoremove -y
+    run "Purge du cache des paquets DNF" dnf clean packages
+}
+
+# Borne durablement le journal systemd. On écrit dans un drop-in plutôt que
+# dans journald.conf pour ne pas entrer en conflit avec le paquet systemd.
+clean_journal() {
+    local before
+    before="$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.,]+[KMG]' | tail -1)"
+    info "Journal systemd avant nettoyage : ${before:-inconnu}"
+
+    run "Réduction du journal à ${JOURNAL_MAX_SIZE}" \
+        journalctl --vacuum-size="$JOURNAL_MAX_SIZE"
+
+    if [[ ! -f "$JOURNALD_CONF" ]]; then
+        install -d "$(dirname "$JOURNALD_CONF")"
+        run "Plafonnement permanent du journal (SystemMaxUse=${JOURNAL_MAX_SIZE})" \
+            bash -c "printf '[Journal]\nSystemMaxUse=%s\n' '$JOURNAL_MAX_SIZE' > '$JOURNALD_CONF'"
+    else
+        info "Plafond du journal déjà configuré ($JOURNALD_CONF)"
+    fi
+}
+
+# Supprime les noyaux excédentaires. dnf respecte installonly_limit lors des
+# mises à jour, mais les noyaux déjà accumulés avant ne sont pas retirés
+# rétroactivement : « dnf remove --oldinstallonly » s'en charge.
+clean_kernels() {
+    local installed
+    installed=$(rpm -q kernel-core | wc -l)
+    info "Noyaux installés : ${installed}"
+
+    if [[ "$installed" -le 2 ]]; then
+        info "Rien à purger (limite de 2 noyaux déjà respectée)"
+        return 0
+    fi
+
+    run "Suppression des anciens noyaux" \
+        dnf remove -y --oldinstallonly --setopt=installonly_limit=2
+}
+
+# Runtimes Flatpak devenus inutiles (souvent plusieurs centaines de Mo).
+clean_flatpak() {
+    if ! has_cmd flatpak; then
+        info "Flatpak non installé : étape ignorée."
+        return 0
+    fi
+    run "Suppression des runtimes Flatpak inutilisés" \
+        flatpak uninstall --unused --noninteractive -y
+}
+
+# Rotation des journaux du script lui-même : un fichier est créé à chaque
+# exécution dans /var/log et rien ne les supprimait jusqu'ici.
+clean_setup_logs() {
+    local logs count
+    # Le log de l'exécution courante est exclu : il est encore en écriture.
+    # tail -n +N démarre à la ligne N incluse : pour conserver les
+    # SETUP_LOG_KEEP plus récents, la purge commence donc à N+1.
+    mapfile -t logs < <(find /var/log -maxdepth 1 -name 'fedora-setup_*.log' \
+        ! -samefile "$LOG_FILE" -printf '%T@ %p\n' 2>/dev/null \
+        | sort -rn | tail -n "+$((SETUP_LOG_KEEP + 1))" | cut -d' ' -f2-)
+
+    count=${#logs[@]}
+    if [[ $count -eq 0 ]]; then
+        info "Journaux du script : rien à purger (max ${SETUP_LOG_KEEP} conservés)"
+        return 0
+    fi
+
+    run "Suppression de ${count} ancien(s) journal(aux) du script" \
+        rm -f "${logs[@]}"
+}
+
+# TRIM : indispensable pour préserver les performances d'un SSD dans la durée.
+# fstrim.timer le fait déjà chaque semaine ; on vérifie qu'il est actif.
+clean_trim() {
+    if ! systemctl is-enabled --quiet fstrim.timer 2>/dev/null; then
+        run "Activation du TRIM hebdomadaire (fstrim.timer)" \
+            systemctl enable --now fstrim.timer
+    else
+        info "TRIM hebdomadaire déjà actif (fstrim.timer)"
+    fi
+
+    run "TRIM immédiat de tous les systèmes de fichiers" fstrim -av
+}
+
+clean_system() {
+    require_root_for "--clean" "nettoyage & maintenance"
+
+    local free_before free_after
+    free_before=$(df --output=avail -BM / | tail -1 | tr -d ' M')
+
+    section "Paquets et cache DNF"
+    clean_dnf
+
+    section "Journal systemd"
+    clean_journal
+
+    section "Anciens noyaux"
+    clean_kernels
+
+    section "Runtimes Flatpak"
+    clean_flatpak
+
+    section "Journaux de ${CMD_NAME}"
+    clean_setup_logs
+
+    section "TRIM du SSD"
+    clean_trim
+
+    section "Bilan"
+    free_after=$(df --output=avail -BM / | tail -1 | tr -d ' M')
+    info "Espace libre sur / : ${free_before} Mo -> ${C_GREEN}${free_after} Mo${C_RESET}"
+    info "Récupéré : ${C_GREEN}$(( free_after - free_before )) Mo${C_RESET}"
+}
+
+#===============================================================================
+# RÉACTIVITÉ MÉMOIRE (--memory)
+#
+# Fedora active zram par défaut (swap compressé en RAM), mais conserve les
+# valeurs sysctl pensées pour un swap sur disque. Or les deux n'ont rien à
+# voir : swapper vers zram coûte un cycle CPU de compression, pas une
+# entrée-sortie disque. Avec les réglages par défaut, le noyau évite un swap
+# devenu bon marché et préfère jeter du cache de pages, ce qui dégrade la
+# réactivité au lieu de l'améliorer.
+#
+# Réglages appliqués (drop-in sysctl, jamais /etc/sysctl.conf) :
+#   vm.swappiness=180        valeur recommandée avec zram (défaut 60, max 200)
+#   vm.vfs_cache_pressure=50 conserve plus longtemps les métadonnées de
+#                            fichiers (inodes/dentries) : navigation plus vive
+#   vm.dirty_bytes           borne les écritures en attente pour éviter les
+#   vm.dirty_background_bytes  à-coups d'E/S lors des grosses copies
+#   vm.page-cluster=0        zram lit page par page : la lecture anticipée
+#                            par grappes de 8 pages n'apporte rien ici
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --memory.
+#===============================================================================
+
+readonly SYSCTL_CONF="/etc/sysctl.d/99-fedora-setup-memory.conf"
+
+# Vrai si un périphérique zram est actif comme swap.
+zram_active() {
+    swapon --show=NAME --noheadings 2>/dev/null | grep -q '^/dev/zram'
+}
+
+# Écrit le drop-in sysctl et l'applique immédiatement (sans redémarrage).
+memory_apply_sysctl() {
+    if [[ -f "$SYSCTL_CONF" ]]; then
+        info "Réglages déjà présents ($SYSCTL_CONF)"
+        info "Supprimez ce fichier pour les régénérer."
+        return 0
+    fi
+
+    # dirty_bytes remplace dirty_ratio (exprimé en % de la RAM) : sur une
+    # machine bien dotée, 20 % de RAM en écritures sales représente plusieurs
+    # gigaoctets vidés d'un coup sur le disque, d'où des gels perceptibles.
+    run "Écriture des réglages mémoire ($SYSCTL_CONF)" \
+        bash -c "cat > '$SYSCTL_CONF' <<'SYSCTL'
+# Généré par fedora-setup --memory
+# Réactivité mémoire adaptée à un swap zram (compressé, en RAM).
+
+# Swapper vers zram est peu coûteux : on le privilégie au lieu de sacrifier
+# le cache de pages (60 = valeur pensée pour un swap sur disque).
+vm.swappiness=180
+
+# Garder plus longtemps inodes et dentries en cache.
+vm.vfs_cache_pressure=50
+
+# Borner les écritures en attente : évite les à-coups sur grosses copies.
+vm.dirty_bytes=268435456
+vm.dirty_background_bytes=67108864
+
+# zram se lit page par page : pas de lecture anticipée par grappes.
+vm.page-cluster=0
+SYSCTL"
+
+    run "Application immédiate des réglages" sysctl -q -p "$SYSCTL_CONF"
+}
+
+# systemd-oomd tue proprement le processus fautif avant que la machine ne se
+# fige. Sans lui, une saturation mémoire rend le bureau inutilisable pendant
+# de longues minutes (thrashing) au lieu de perdre une seule application.
+memory_check_oomd() {
+    if systemctl is-active --quiet systemd-oomd; then
+        info "systemd-oomd actif (protection contre les gels mémoire)"
+        return 0
+    fi
+
+    info "${C_YELLOW}systemd-oomd est inactif : en cas de saturation mémoire,${C_RESET}"
+    info "${C_YELLOW}le bureau peut se figer durablement.${C_RESET}"
+
+    if ask_yes_no "Activer systemd-oomd ?"; then
+        run "Activation de systemd-oomd" systemctl enable --now systemd-oomd
+    else
+        info "systemd-oomd laissé inactif."
+    fi
+}
+
+optimize_memory() {
+    require_root_for "--memory" "réactivité mémoire"
+
+    section "État actuel"
+    local ram_total swappiness_now
+    ram_total="$(free -h | awk '/^Mem:/ {print $2}')"
+    swappiness_now="$(cat /proc/sys/vm/swappiness)"
+    info "RAM totale       : ${ram_total}"
+    info "vm.swappiness    : ${swappiness_now}"
+
+    if zram_active; then
+        local zram_size
+        zram_size="$(swapon --show=NAME,SIZE --noheadings | awk '/zram/ {print $2}')"
+        info "Swap zram        : ${C_GREEN}actif${C_RESET} (${zram_size})"
+    else
+        info "Swap zram        : ${C_YELLOW}inactif${C_RESET}"
+        info "${C_YELLOW}Les réglages ci-dessous visent un swap zram. Sans zram,${C_RESET}"
+        info "${C_YELLOW}un swappiness élevé solliciterait fortement le disque.${C_RESET}"
+        if ! ask_yes_no "Appliquer quand même les réglages ?"; then
+            info "Optimisation mémoire annulée."
+            return 0
+        fi
+    fi
+
+    section "Réglages du noyau"
+    memory_apply_sysctl
+
+    section "Protection contre les saturations mémoire"
+    memory_check_oomd
+
+    section "Bilan"
+    info "vm.swappiness    : ${swappiness_now} -> ${C_GREEN}$(cat /proc/sys/vm/swappiness)${C_RESET}"
+    info "Réglages persistants dans ${SYSCTL_CONF}"
+}
+
+#===============================================================================
+#===============================================================================
+# DÉMARRAGE (--boot)
+#
+# Analyse le temps de démarrage et propose de désactiver les services qui le
+# ralentissent sans contrepartie. Chaque désactivation est demandée
+# individuellement et n'est proposée que si le matériel ou l'usage réel le
+# permet : une imprimante configurée empêche de proposer cups, une puce
+# Bluetooth présente empêche de proposer bluetooth. On ne masque jamais un
+# service dont dépend l'usage courant de la machine.
+#
+# Les services sont « disabled », pas « masked » : un simple
+# « systemctl enable » suffit à revenir en arrière.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --boot.
+#===============================================================================
+
+# Propose de désactiver un service, en expliquant ce qu'on y gagne et perd.
+#   $1 : nom de l'unité
+#   $2 : ce que la désactivation implique (affiché à l'utilisateur)
+boot_offer_disable() {
+    local unit="$1" consequence="$2"
+
+    if ! systemctl is-enabled --quiet "$unit" 2>/dev/null; then
+        info "${unit} : déjà désactivé"
+        return 0
+    fi
+
+    info "${C_YELLOW}${unit}${C_RESET} — ${consequence}"
+    if ask_yes_no "Désactiver ${unit} ?"; then
+        run "Désactivation de ${unit}" systemctl disable "$unit"
+        info "Réactivation possible : ${C_YELLOW}sudo systemctl enable ${unit}${C_RESET}"
+    else
+        info "${unit} conservé."
+    fi
+}
+
+# NetworkManager-wait-online retarde graphical.target jusqu'à ce que le
+# réseau soit joignable. Utile sur un serveur dont les services montent des
+# partages réseau au démarrage, inutile sur un poste de bureau où les
+# applications gèrent elles-mêmes l'absence de réseau.
+boot_network_wait() {
+    local delay
+    delay="$(systemd-analyze blame 2>/dev/null \
+        | awk '/NetworkManager-wait-online/ {print $1; exit}')"
+
+    if [[ -z "$delay" ]]; then
+        info "NetworkManager-wait-online : non mesuré (déjà désactivé ?)"
+        return 0
+    fi
+
+    boot_offer_disable "NetworkManager-wait-online.service" \
+        "retarde le démarrage de ${C_BOLD}${delay}${C_RESET} en attendant le réseau ; inutile sur un poste de bureau"
+}
+
+# cups n'est proposé à la désactivation que si AUCUNE imprimante n'est
+# configurée : sur une machine qui imprime, le désactiver casse l'impression.
+boot_cups() {
+    if ! pkg_installed cups; then
+        return 0
+    fi
+
+    local printers
+    printers="$(lpstat -p 2>/dev/null | grep -c '^printer' || true)"
+
+    if [[ "${printers:-0}" -gt 0 ]]; then
+        info "cups : ${printers} imprimante(s) configurée(s) — conservé"
+        return 0
+    fi
+
+    boot_offer_disable "cups.service" \
+        "service d'impression, aucune imprimante configurée sur cette machine"
+}
+
+# bluetooth n'est proposé que si la machine n'a aucun contrôleur Bluetooth.
+boot_bluetooth() {
+    if ! pkg_installed bluez; then
+        return 0
+    fi
+
+    # rfkill liste les contrôleurs réellement présents (intégrés ou USB).
+    if rfkill list bluetooth 2>/dev/null | grep -q .; then
+        info "bluetooth : contrôleur présent — conservé"
+        return 0
+    fi
+
+    boot_offer_disable "bluetooth.service" \
+        "aucun contrôleur Bluetooth détecté sur cette machine"
+}
+
+# Le menu GRUB attend par défaut avant de démarrer. Sur une machine à système
+# unique, ce délai est du temps perdu à chaque allumage. On descend à 1 s
+# plutôt que 0 : à 0 le menu devient inatteignable, ce qui complique
+# sérieusement le démarrage sur un noyau antérieur en cas de problème.
+boot_grub_timeout() {
+    local grub_default="/etc/default/grub"
+    local current
+
+    if [[ ! -f "$grub_default" ]]; then
+        info "Fichier $grub_default introuvable : étape ignorée."
+        return 0
+    fi
+
+    current="$(grep -oP '^GRUB_TIMEOUT=\K.*' "$grub_default" 2>/dev/null || echo "?")"
+    info "Délai actuel du menu GRUB : ${current}s"
+
+    if [[ "$current" == "1" || "$current" == "0" ]]; then
+        info "Délai déjà minimal — inchangé"
+        return 0
+    fi
+
+    if ! ask_yes_no "Réduire le délai du menu GRUB à 1 seconde ?"; then
+        info "Délai GRUB inchangé."
+        return 0
+    fi
+
+    run "Sauvegarde de ${grub_default}.bak" cp -p "$grub_default" "${grub_default}.bak"
+    run "Passage de GRUB_TIMEOUT à 1" \
+        sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=1/' "$grub_default"
+
+    # grub2-mkconfig régénère la configuration effective à partir du fichier
+    # ci-dessus. Depuis Fedora 34, grub.cfg est dans /boot/grub2 même en UEFI
+    # (/boot/efi/EFI/fedora/grub.cfg n'est plus qu'un fichier de redirection).
+    local grub_cfg="/boot/grub2/grub.cfg"
+    if [[ ! -f "$grub_cfg" ]]; then
+        info "${C_YELLOW}grub.cfg introuvable ($grub_cfg) : régénération ignorée.${C_RESET}"
+        info "${C_YELLOW}GRUB_TIMEOUT est modifié, appliquez-le manuellement si besoin.${C_RESET}"
+        return 0
+    fi
+
+    run "Régénération de la configuration GRUB" grub2-mkconfig -o "$grub_cfg"
+}
+
+optimize_boot() {
+    require_root_for "--boot" "optimisation du démarrage"
+
+    section "Temps de démarrage actuel"
+    local total
+    total="$(systemd-analyze 2>/dev/null | head -1)"
+    info "${total:-mesure indisponible}"
+
+    section "Services les plus lents"
+    # Les unités .device et .mount reflètent la détection matérielle, pas des
+    # services désactivables : on ne montre que ce sur quoi on peut agir.
+    local slow
+    slow="$(systemd-analyze blame 2>/dev/null \
+        | grep -E '\.service$' | grep -v 'akmods' | head -8)"
+    if [[ -n "$slow" ]]; then
+        while IFS= read -r line; do
+            info "  ${line}"
+        done <<< "$slow"
+    else
+        info "Mesure indisponible."
+    fi
+
+    section "Services ralentissant le démarrage"
+    boot_network_wait
+    boot_cups
+    boot_bluetooth
+
+    section "Menu de démarrage (GRUB)"
+    boot_grub_timeout
+
+    section "Bilan"
+    info "Les gains seront visibles au ${C_BOLD}prochain démarrage${C_RESET}."
+    info "Comparer ensuite avec : ${C_YELLOW}systemd-analyze${C_RESET}"
+}
+
+#===============================================================================
+#===============================================================================
+# PORTABLE / BATTERIE (--laptop)
+#
+# Optimisations d'autonomie réservées aux machines sur batterie. Sur un poste
+# fixe elles n'apportent rien et peuvent brider les performances : le script
+# détecte donc la présence d'une batterie et refuse de s'exécuter sans elle
+# (sauf confirmation explicite).
+#
+# TLP vs power-profiles-daemon : les deux pilotent les mêmes réglages du
+# noyau et se contredisent s'ils tournent ensemble. Fedora installe PPD par
+# défaut (intégré au sélecteur de profil de GNOME) ; TLP est plus agressif et
+# plus configurable, mais son installation impose de neutraliser PPD. Le
+# script explique le compromis et laisse le choix, sans jamais installer les
+# deux.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --laptop.
+#===============================================================================
+
+# Vrai si la machine possède une batterie (donc : portable).
+has_battery() {
+    local bat
+    for bat in /sys/class/power_supply/BAT*; do
+        [[ -e "$bat" ]] && return 0
+    done
+    return 1
+}
+
+# Vrai si le processeur est un Intel (thermald ne concerne qu'eux).
+cpu_is_intel() {
+    grep -qi 'GenuineIntel' /proc/cpuinfo
+}
+
+# Installe TLP en neutralisant power-profiles-daemon, ou conserve PPD.
+# Les deux services pilotent les mêmes registres : les faire cohabiter
+# produit des réglages incohérents et des retours en arrière permanents.
+laptop_power_manager() {
+    local ppd_installed=1 tlp_installed=1
+    pkg_installed power-profiles-daemon || ppd_installed=0
+    pkg_installed tlp || tlp_installed=0
+
+    if [[ $tlp_installed -eq 1 ]]; then
+        info "TLP est déjà installé"
+        if [[ $ppd_installed -eq 1 ]]; then
+            info "${C_YELLOW}power-profiles-daemon est également présent :${C_RESET}"
+            info "${C_YELLOW}les deux se contredisent, il faut en neutraliser un.${C_RESET}"
+            if ask_yes_no "Masquer power-profiles-daemon au profit de TLP ?"; then
+                run "Masquage de power-profiles-daemon" \
+                    systemctl mask --now power-profiles-daemon
+            fi
+        fi
+        run "Activation de TLP" systemctl enable --now tlp
+        return 0
+    fi
+
+    info "Gestionnaire d'énergie :"
+    info "  ${C_BOLD}power-profiles-daemon${C_RESET} — intégré à GNOME (sélecteur de"
+    info "     profil dans le menu système), réglages prudents, aucun paramétrage."
+    info "  ${C_BOLD}TLP${C_RESET} — plus agressif sur l'autonomie, largement configurable,"
+    info "     mais remplace le sélecteur de profil de GNOME."
+
+    if [[ $ppd_installed -eq 1 ]]; then
+        info "Actuellement : ${C_GREEN}power-profiles-daemon${C_RESET}"
+    else
+        info "Actuellement : ${C_YELLOW}aucun gestionnaire installé${C_RESET}"
+    fi
+
+    if ! ask_yes_no "Installer TLP à la place ?"; then
+        if [[ $ppd_installed -eq 0 ]]; then
+            if ask_yes_no "Installer power-profiles-daemon ?"; then
+                run "Installation de power-profiles-daemon" \
+                    dnf install -y power-profiles-daemon
+                run "Activation de power-profiles-daemon" \
+                    systemctl enable --now power-profiles-daemon
+            fi
+        else
+            info "power-profiles-daemon conservé."
+        fi
+        return 0
+    fi
+
+    # tlp-rdw gère la radio (Wi-Fi/Bluetooth) selon la connexion filaire.
+    run "Installation de TLP" dnf install -y tlp tlp-rdw
+
+    if [[ $ppd_installed -eq 1 ]]; then
+        run "Masquage de power-profiles-daemon (conflit avec TLP)" \
+            systemctl mask --now power-profiles-daemon
+    fi
+
+    run "Activation de TLP" systemctl enable --now tlp
+    info "Configuration : ${C_YELLOW}/etc/tlp.conf${C_RESET} — état : ${C_YELLOW}sudo tlp-stat -s${C_RESET}"
+}
+
+# thermald pilote la gestion thermique des processeurs Intel. Sans lui, le
+# noyau ne réagit qu'aux seuils matériels, plus brutaux (throttling tardif).
+laptop_thermald() {
+    if ! cpu_is_intel; then
+        info "Processeur non-Intel : thermald sans objet."
+        return 0
+    fi
+
+    if ! pkg_installed thermald; then
+        if ! ask_yes_no "Installer thermald (gestion thermique Intel) ?"; then
+            info "thermald ignoré."
+            return 0
+        fi
+        run "Installation de thermald" dnf install -y thermald
+    fi
+
+    if systemctl is-active --quiet thermald; then
+        info "thermald actif"
+    else
+        run "Activation de thermald" systemctl enable --now thermald
+    fi
+}
+
+# powertop --auto-tune applique les réglages d'économie recommandés. Ils sont
+# perdus au redémarrage : on propose une unité systemd pour les réappliquer.
+# Attention : l'auto-tune active l'économie d'énergie sur les ports USB, ce
+# qui peut faire « décrocher » certains périphériques (souris, claviers,
+# webcams). D'où le caractère explicitement optionnel et réversible.
+readonly POWERTOP_UNIT="/etc/systemd/system/powertop-autotune.service"
+
+laptop_powertop() {
+    if ! pkg_installed powertop; then
+        if ! ask_yes_no "Installer powertop (analyse et réglages d'économie) ?"; then
+            info "powertop ignoré."
+            return 0
+        fi
+        run "Installation de powertop" dnf install -y powertop
+    fi
+
+    if [[ -f "$POWERTOP_UNIT" ]]; then
+        info "Unité powertop-autotune déjà en place"
+        return 0
+    fi
+
+    info "${C_YELLOW}L'auto-tune active l'économie d'énergie sur les ports USB :${C_RESET}"
+    info "${C_YELLOW}certaines souris ou webcams peuvent se déconnecter par moments.${C_RESET}"
+
+    if ! ask_yes_no "Appliquer powertop --auto-tune à chaque démarrage ?"; then
+        info "Auto-tune non configuré (powertop reste utilisable manuellement)."
+        return 0
+    fi
+
+    # Chemin résolu depuis le paquet plutôt que codé en dur : systemd exige un
+    # ExecStart absolu et refuse de démarrer l'unité si le chemin est faux.
+    local powertop_bin
+    powertop_bin="$(command -v powertop || rpm -ql powertop | grep -m1 'bin/powertop$')"
+    if [[ -z "$powertop_bin" ]]; then
+        error "Binaire powertop introuvable : unité non créée."
+        return 1
+    fi
+
+    run "Création de l'unité powertop-autotune" \
+        bash -c "cat > '$POWERTOP_UNIT' <<UNIT
+[Unit]
+Description=Réglages d'économie d'énergie powertop (fedora-setup)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=${powertop_bin} --auto-tune
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT"
+
+    run "Activation de powertop-autotune" \
+        systemctl enable --now powertop-autotune.service
+    info "Pour annuler : ${C_YELLOW}sudo systemctl disable --now powertop-autotune${C_RESET}"
+    info "puis supprimer ${POWERTOP_UNIT}"
+}
+
+optimize_laptop() {
+    require_root_for "--laptop" "portable & autonomie"
+
+    section "Détection du matériel"
+    if has_battery; then
+        local bat_state
+        bat_state="$(cat /sys/class/power_supply/BAT*/capacity 2>/dev/null | head -1)"
+        info "Batterie détectée (charge : ${bat_state:-?} %)"
+    else
+        info "${C_YELLOW}Aucune batterie détectée : cette machine semble être un poste fixe.${C_RESET}"
+        info "${C_YELLOW}Ces réglages visent l'autonomie et peuvent brider les performances.${C_RESET}"
+        if ! ask_yes_no "Continuer quand même ?"; then
+            info "Optimisation portable annulée."
+            return 0
+        fi
+    fi
+    info "Processeur : $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)"
+
+    section "Gestionnaire d'énergie"
+    laptop_power_manager
+
+    section "Gestion thermique"
+    laptop_thermald
+
+    section "Réglages d'économie (powertop)"
+    laptop_powertop
+
+    section "Bilan"
+    info "Autonomie estimée et détail des réglages : ${C_YELLOW}sudo powertop${C_RESET}"
+    if pkg_installed tlp; then
+        info "État de TLP : ${C_YELLOW}sudo tlp-stat -s${C_RESET}"
+    fi
+}
+
+#===============================================================================
+#===============================================================================
+# SÉCURITÉ / RÉSEAU (--security)
+#
+# Vérifie et renforce les protections de base d'une installation Fedora.
+# L'esprit de cette section est de constater puis proposer : rien n'est
+# durci de force, car un pare-feu trop strict ou un résolveur DNS mal choisi
+# casse la connectivité de façon difficile à diagnostiquer.
+#
+# Les mises à jour automatiques sont volontairement configurées en mode
+# « téléchargement + notification » et non en installation automatique :
+# installer des paquets sans surveillance sur un poste de travail peut
+# interrompre une session (services redémarrés, modules noyau remplacés).
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --security.
+#===============================================================================
+
+# SELinux est une protection majeure de Fedora, souvent désactivée à tort en
+# suivant des tutoriels. On se contente de signaler : le réactiver à chaud
+# sur un système ayant tourné en permissive exige un réétiquetage complet.
+security_selinux() {
+    if ! has_cmd getenforce; then
+        info "SELinux : outils absents, état indéterminé."
+        return 0
+    fi
+
+    local state
+    state="$(getenforce 2>/dev/null)"
+
+    case "$state" in
+        Enforcing)
+            info "SELinux : ${C_GREEN}Enforcing${C_RESET} (protection active)"
+            ;;
+        Permissive)
+            info "SELinux : ${C_YELLOW}Permissive${C_RESET} — les violations sont"
+            info "journalisées mais autorisées."
+            info "Pour réactiver : ${C_YELLOW}sudo setenforce 1${C_RESET} puis passer"
+            info "SELINUX=enforcing dans /etc/selinux/config"
+            ;;
+        Disabled)
+            info "SELinux : ${C_RED}Disabled${C_RESET}"
+            info "${C_YELLOW}Le réactiver impose un réétiquetage complet du disque${C_RESET}"
+            info "${C_YELLOW}(sudo fixfiles -F onboot puis redémarrage) : à faire${C_RESET}"
+            info "${C_YELLOW}en connaissance de cause, hors de ce script.${C_RESET}"
+            ;;
+        *)
+            info "SELinux : état indéterminé (${state:-?})"
+            ;;
+    esac
+}
+
+# firewalld est actif par défaut sur Fedora ; on vérifie qu'il l'est bien et
+# on affiche la zone appliquée, sans la modifier : la zone conditionne les
+# services joignables et un changement peut couper un partage en cours.
+security_firewall() {
+    if ! pkg_installed firewalld; then
+        info "firewalld n'est pas installé."
+        if ask_yes_no "Installer et activer firewalld ?"; then
+            run "Installation de firewalld" dnf install -y firewalld
+            run "Activation de firewalld" systemctl enable --now firewalld
+        fi
+        return 0
+    fi
+
+    if ! systemctl is-active --quiet firewalld; then
+        info "${C_YELLOW}firewalld est installé mais inactif.${C_RESET}"
+        if ask_yes_no "Activer firewalld ?"; then
+            run "Activation de firewalld" systemctl enable --now firewalld
+        fi
+        return 0
+    fi
+
+    local zone
+    zone="$(firewall-cmd --get-default-zone 2>/dev/null)"
+    info "firewalld : ${C_GREEN}actif${C_RESET} (zone « ${zone:-?} »)"
+
+    # FedoraWorkstation ouvre par défaut les ports hauts 1025-65535 en UDP
+    # pour faciliter le partage et la découverte réseau. C'est un compromis
+    # d'ergonomie discutable sur un réseau non maîtrisé (Wi-Fi public).
+    if [[ "$zone" == "FedoraWorkstation" ]]; then
+        info "${C_YELLOW}Cette zone laisse ouverts les ports UDP 1025-65535${C_RESET}"
+        info "${C_YELLOW}(partage de fichiers, découverte réseau). Sur un réseau${C_RESET}"
+        info "${C_YELLOW}public, la zone « public » est nettement plus stricte.${C_RESET}"
+        info "Services ouverts : ${C_YELLOW}firewall-cmd --list-all${C_RESET}"
+        info "Pour durcir : ${C_YELLOW}sudo firewall-cmd --set-default-zone=public${C_RESET}"
+    fi
+}
+
+# Mises à jour automatiques en mode « télécharger et prévenir ». Le paquet
+# diffère selon la génération de DNF : dnf5-plugin-automatic sur dnf5,
+# dnf-automatic sur dnf4.
+security_auto_updates() {
+    # Le nom du paquet, du minuteur et du fichier de configuration diffèrent
+    # selon la génération de DNF. Le paquet dnf5 fournit les deux minuteurs
+    # (dnf-automatic.timer et dnf5-automatic.timer) : c'est dnf5-automatic
+    # qu'il faut activer, et sa configuration effective est dans
+    # /etc/dnf/dnf5-plugins/automatic.conf, pas /etc/dnf/automatic.conf.
+    local pkg="dnf-automatic" timer="dnf-automatic.timer"
+    local conf="/etc/dnf/automatic.conf"
+
+    if dnf --version 2>/dev/null | grep -q '^dnf5'; then
+        pkg="dnf5-plugin-automatic"
+        timer="dnf5-automatic.timer"
+        conf="/etc/dnf/dnf5-plugins/automatic.conf"
+    fi
+
+    if systemctl is-enabled --quiet dnf-automatic.timer 2>/dev/null \
+        || systemctl is-enabled --quiet dnf5-automatic.timer 2>/dev/null; then
+        info "Mises à jour automatiques déjà configurées"
+        return 0
+    fi
+
+    info "Les mises à jour de sécurité peuvent être téléchargées"
+    info "automatiquement, avec notification (sans installation silencieuse)."
+
+    if ! ask_yes_no "Activer les mises à jour automatiques (téléchargement seul) ?"; then
+        info "Mises à jour automatiques non activées."
+        return 0
+    fi
+
+    if ! pkg_installed "$pkg"; then
+        if ! run "Installation de ${pkg}" dnf install -y "$pkg"; then
+            error "Installation de ${pkg} impossible : étape abandonnée."
+            return 1
+        fi
+    fi
+
+    # download_updates=yes / apply_updates=no : on récupère les paquets pour
+    # que l'installation manuelle soit immédiate, sans rien appliquer seul.
+    if [[ -f "$conf" ]]; then
+        run "Sauvegarde de ${conf}.bak" cp -p "$conf" "${conf}.bak"
+        run "Configuration : téléchargement sans installation" \
+            sed -i -e 's/^upgrade_type\s*=.*/upgrade_type = security/' \
+                   -e 's/^download_updates\s*=.*/download_updates = yes/' \
+                   -e 's/^apply_updates\s*=.*/apply_updates = no/' "$conf"
+    else
+        info "${C_YELLOW}Fichier de configuration introuvable ($conf) :${C_RESET}"
+        info "${C_YELLOW}vérifiez que apply_updates reste à « no ».${C_RESET}"
+    fi
+
+    run "Activation du minuteur ${timer}" systemctl enable --now "$timer"
+    info "Mises à jour en attente visibles avec : ${C_YELLOW}dnf check-update${C_RESET}"
+}
+
+# DNS chiffré (DNS-over-TLS). Volontairement prudent : si le résolveur
+# courant est une adresse privée, il s'agit d'un DNS local (box, réseau
+# d'entreprise) qui résout des noms internes. Le remplacer par un résolveur
+# public casserait l'accès aux ressources locales.
+security_dns() {
+    if ! systemctl is-active --quiet systemd-resolved; then
+        info "systemd-resolved inactif : configuration DNS laissée telle quelle."
+        return 0
+    fi
+
+    local current dot_state
+    current="$(resolvectl status 2>/dev/null | awk '/Current DNS Server/ {print $NF; exit}')"
+    # resolvectl préfixe le protocole d'un + (actif) ou d'un - (inactif) :
+    # « +DNSOverTLS » / « -DNSOverTLS », sans valeur après un signe égal.
+    dot_state="$(resolvectl status 2>/dev/null | grep -o '[+-]DNSOverTLS' | head -1)"
+
+    info "Résolveur DNS actuel : ${current:-inconnu}"
+
+    if [[ "$dot_state" == "+DNSOverTLS" ]]; then
+        info "DNS-over-TLS : ${C_GREEN}déjà actif${C_RESET}"
+        return 0
+    fi
+
+    # Adresses privées (RFC 1918) : résolveur local, on n'y touche pas.
+    if [[ "$current" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+        info "${C_YELLOW}Ce résolveur est local (adresse privée) : il résout${C_RESET}"
+        info "${C_YELLOW}probablement des noms internes à votre réseau.${C_RESET}"
+        info "${C_YELLOW}Le remplacer par un résolveur public casserait cet accès :${C_RESET}"
+        info "${C_YELLOW}étape ignorée par précaution.${C_RESET}"
+        return 0
+    fi
+
+    info "Le DNS non chiffré est lisible par tout intermédiaire réseau."
+    info "DNS-over-TLS chiffre ces requêtes (résolveur : Quad9, 9.9.9.9)."
+
+    if ! ask_yes_no "Activer DNS-over-TLS via Quad9 ?"; then
+        info "Configuration DNS inchangée."
+        return 0
+    fi
+
+    local conf_dir="/etc/systemd/resolved.conf.d"
+    local conf="${conf_dir}/99-fedora-setup-dot.conf"
+
+    install -d "$conf_dir"
+    # opportunistic plutôt que yes : en mode strict, un portail captif ou un
+    # réseau bloquant le port 853 rend toute résolution impossible.
+    run "Configuration de DNS-over-TLS" \
+        bash -c "cat > '$conf' <<'RESOLVED'
+# Généré par fedora-setup --security
+[Resolve]
+DNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net
+DNSOverTLS=opportunistic
+RESOLVED"
+
+    run "Redémarrage de systemd-resolved" systemctl restart systemd-resolved
+    info "Vérifier avec : ${C_YELLOW}resolvectl status${C_RESET}"
+    info "Pour annuler : supprimer ${conf} et redémarrer systemd-resolved"
+}
+
+secure_system() {
+    require_root_for "--security" "sécurité & réseau"
+
+    section "SELinux"
+    security_selinux
+
+    section "Pare-feu"
+    security_firewall
+
+    section "Mises à jour automatiques"
+    security_auto_updates
+
+    section "Confidentialité DNS"
+    security_dns
+
+    section "Bilan"
+    info "Aucun réglage n'a été durci sans confirmation."
+    info "État du pare-feu : ${C_YELLOW}sudo firewall-cmd --list-all${C_RESET}"
+}
+
+#===============================================================================
+#===============================================================================
+# OUTILS DE DÉVELOPPEMENT (--devtools)
+#
+# Environnements de développement isolés et polices de caractères. Tout est
+# proposé individuellement : ces outils sont volumineux (la virtualisation
+# dépasse le gigaoctet) et n'ont d'intérêt que selon l'usage réel.
+#
+# Distrobox et Toolbox répondent au même besoin — un conteneur jetable où
+# installer des dépendances sans polluer le système — mais Toolbox est fourni
+# par Fedora et limité aux images Fedora, là où Distrobox accepte n'importe
+# quelle distribution (Ubuntu, Arch, Debian…). Les deux peuvent coexister
+# sans conflit, contrairement à TLP et power-profiles-daemon.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --devtools.
+#===============================================================================
+
+# Conteneurs de développement jetables, intégrés au système hôte
+# (le dossier personnel et l'affichage graphique restent accessibles).
+devtools_containers() {
+    if pkg_installed distrobox; then
+        info "distrobox déjà installé"
+    else
+        info "${C_BOLD}Distrobox${C_RESET} — conteneurs de développement basés sur"
+        info "n'importe quelle distribution, avec accès au dossier personnel."
+        if pkg_installed toolbox; then
+            info "(toolbox est déjà présent : il fait de même, mais uniquement"
+            info "avec des images Fedora. Les deux peuvent cohabiter.)"
+        fi
+
+        if ask_yes_no "Installer distrobox ?"; then
+            # podman est le moteur de conteneurs utilisé par distrobox ;
+            # il est déjà présent sur une Workstation, mais pas garanti.
+            run "Installation de distrobox" dnf install -y distrobox podman
+            info "Créer un conteneur : ${C_YELLOW}distrobox create --name dev --image fedora:latest${C_RESET}"
+            info "Y entrer : ${C_YELLOW}distrobox enter dev${C_RESET}"
+        else
+            info "distrobox ignoré."
+        fi
+    fi
+}
+
+# Virtualisation KVM/QEMU via libvirt. Nécessite un processeur compatible :
+# sans VT-x/AMD-V, libvirt se rabat sur une émulation logicielle très lente,
+# ce qui rend l'installation inutile en pratique.
+devtools_virtualization() {
+    local virt_flags
+    virt_flags="$(grep -Ec 'vmx|svm' /proc/cpuinfo || true)"
+
+    if [[ "${virt_flags:-0}" -eq 0 ]]; then
+        info "${C_YELLOW}Aucune extension de virtualisation (VT-x / AMD-V) détectée.${C_RESET}"
+        info "${C_YELLOW}Vérifiez qu'elle est activée dans le BIOS/UEFI. Sans elle,${C_RESET}"
+        info "${C_YELLOW}les machines virtuelles seraient émulées et très lentes.${C_RESET}"
+        if ! ask_yes_no "Installer quand même la virtualisation ?"; then
+            info "Virtualisation ignorée."
+            return 0
+        fi
+    else
+        info "Extensions de virtualisation : ${C_GREEN}disponibles${C_RESET}"
+    fi
+
+    if pkg_installed libvirt && pkg_installed virt-manager; then
+        info "Virtualisation déjà installée"
+    else
+        info "${C_BOLD}KVM / libvirt${C_RESET} — machines virtuelles natives (~1 Go)."
+        if ! ask_yes_no "Installer la virtualisation (KVM, libvirt, virt-manager) ?"; then
+            info "Virtualisation ignorée."
+            return 0
+        fi
+        # Le groupe « virtualization » ne rend obligatoire que virt-install :
+        # il ne tire ni virt-manager ni qemu-kvm. Les paquets sont donc
+        # nommés explicitement pour obtenir un environnement réellement
+        # utilisable (moteur, démon, interface graphique, réseau NAT).
+        run "Installation de KVM / libvirt / virt-manager" \
+            dnf install -y qemu-kvm libvirt libvirt-daemon-config-network \
+                virt-install virt-manager
+    fi
+
+    run "Activation de libvirtd" systemctl enable --now libvirtd
+
+    # Sans appartenance au groupe libvirt, virt-manager réclame le mot de
+    # passe root à chaque lancement.
+    local user
+    if user="$(gnome_user)"; then
+        if id -nG "$user" | grep -qw libvirt; then
+            info "L'utilisateur « $user » est déjà dans le groupe libvirt"
+        else
+            run "Ajout de « $user » au groupe libvirt" usermod -aG libvirt "$user"
+            info "${C_YELLOW}Déconnectez-vous / reconnectez-vous pour que ce groupe${C_RESET}"
+            info "${C_YELLOW}prenne effet.${C_RESET}"
+        fi
+    fi
+}
+
+# Polices de caractères : rendu des pages web et des documents Office.
+# Les polices Microsoft ne sont pas redistribuables par Fedora et doivent
+# être récupérées séparément ; on se limite ici aux alternatives libres
+# métriquement compatibles, sans dépendance externe ni acceptation d'EULA.
+devtools_fonts() {
+    info "Polices proposées :"
+    info "  - ${C_BOLD}Liberation${C_RESET} : équivalents libres d'Arial, Times, Courier"
+    info "  - ${C_BOLD}Google Noto${C_RESET} : couverture Unicode étendue (emoji, CJK)"
+    info "  - ${C_BOLD}Fira Code / JetBrains Mono${C_RESET} : polices de programmation"
+
+    if ! ask_yes_no "Installer ces polices ?"; then
+        info "Polices ignorées."
+        return 0
+    fi
+
+    run "Installation des polices Liberation" \
+        dnf install -y liberation-fonts-all
+    run "Installation des polices Noto (emoji et CJK)" \
+        dnf install -y google-noto-emoji-fonts google-noto-sans-cjk-fonts
+    run "Installation des polices de programmation" \
+        dnf install -y fira-code-fonts jetbrains-mono-fonts
+
+    run "Reconstruction du cache de polices" fc-cache -f
+}
+
+install_devtools() {
+    require_root_for "--devtools" "outils de développement"
+
+    section "Conteneurs de développement"
+    devtools_containers
+
+    section "Virtualisation"
+    devtools_virtualization
+
+    section "Polices de caractères"
+    devtools_fonts
+
+    section "Bilan"
+    info "Chaque outil non installé peut l'être plus tard en relançant"
+    info "${C_YELLOW}sudo ${CMD_NAME} --devtools${C_RESET}"
+}
+
+#===============================================================================
+#===============================================================================
 # BASHRC (installation explicite, hors du flux principal)
 #
 # Installe ~/.bashrc de l'utilisateur cible ($SUDO_USER) depuis le gabarit
@@ -736,6 +1885,212 @@ install_bashrc() {
 
     install -m 644 -o "$user" -g "$user" "$bashrc_example" "$dest"
     echo -e "    ${C_GREEN}Installé${C_RESET} : ${dest}"
+}
+
+#===============================================================================
+# DOCKER (installation explicite, hors du flux principal)
+#
+# Fedora fournit « moby-engine » dans ses dépôts, mais la version officielle
+# Docker CE (dépôt download.docker.com) est celle que documente Docker et la
+# seule à fournir buildx et compose v2 en plugins. C'est donc elle qu'on
+# installe ici, après avoir retiré les paquets Fedora concurrents qui entrent
+# en conflit sur les mêmes fichiers.
+#
+# N'est jamais exécuté automatiquement : uniquement via l'option --docker,
+# comme --bashrc.
+#===============================================================================
+
+readonly DOCKER_REPO_URL="https://download.docker.com/linux/fedora/docker-ce.repo"
+readonly DOCKER_REPO_FILE="/etc/yum.repos.d/docker-ce.repo"
+
+# Paquets Fedora en conflit avec Docker CE : ils fournissent les mêmes
+# binaires (/usr/bin/docker, containerd) et bloqueraient l'installation.
+readonly DOCKER_CONFLICTS=(docker docker-client docker-client-latest \
+    docker-common docker-latest docker-latest-logrotate docker-logrotate \
+    docker-selinux docker-engine-selinux docker-engine moby-engine)
+
+# Paquets Docker CE à installer (moteur + CLI + runtime + plugins officiels)
+readonly DOCKER_PACKAGES=(docker-ce docker-ce-cli containerd.io \
+    docker-buildx-plugin docker-compose-plugin)
+
+# Ajoute le dépôt officiel Docker CE (idempotent : ne retélécharge pas le
+# .repo s'il est déjà en place).
+docker_setup_repo() {
+    if [[ -f "$DOCKER_REPO_FILE" ]]; then
+        info "Dépôt Docker CE déjà présent ($DOCKER_REPO_FILE)"
+        return 0
+    fi
+    run "Ajout du dépôt Docker CE" \
+        curl -fsSL -o "$DOCKER_REPO_FILE" "$DOCKER_REPO_URL"
+}
+
+# Retire les paquets Fedora qui entrent en conflit avec Docker CE.
+docker_remove_conflicts() {
+    local p conflicts=()
+    for p in "${DOCKER_CONFLICTS[@]}"; do
+        pkg_installed "$p" && conflicts+=("$p")
+    done
+
+    if [[ ${#conflicts[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    info "Paquets en conflit détectés : ${conflicts[*]}"
+    run "Suppression des paquets en conflit" dnf remove -y "${conflicts[@]}"
+}
+
+# Ajoute l'utilisateur réel ($SUDO_USER) au groupe docker, ce qui permet
+# d'utiliser docker sans sudo. Le groupe est créé par le paquet docker-ce.
+docker_add_user_to_group() {
+    local user
+    user="$(gnome_user)" || {
+        info "Utilisateur cible inconnu : ajout au groupe docker ignoré."
+        return 0
+    }
+
+    if id -nG "$user" | grep -qw docker; then
+        info "L'utilisateur « $user » est déjà dans le groupe docker"
+        return 0
+    fi
+
+    run "Ajout de « $user » au groupe docker" usermod -aG docker "$user"
+
+    info "${C_YELLOW}Attention : appartenir au groupe docker équivaut à un accès root${C_RESET}"
+    info "${C_YELLOW}(le démon tourne en root et peut monter n'importe quel volume).${C_RESET}"
+    info "${C_YELLOW}Déconnectez-vous / reconnectez-vous pour que ce groupe prenne effet.${C_RESET}"
+}
+
+# Vérifie l'installation avec l'image de test officielle. Le démon doit
+# tourner : on le démarre pour la session courante (sans l'activer au boot,
+# ce choix restant à l'utilisateur via « systemctl enable docker »).
+docker_verify() {
+    if ! systemctl is-active --quiet docker; then
+        run "Démarrage du service docker" systemctl start docker
+    fi
+
+    if run "Test docker run hello-world" docker run --rm hello-world; then
+        info "${C_GREEN}Docker fonctionne correctement.${C_RESET}"
+    else
+        error "Le test hello-world a échoué (voir $LOG_FILE)."
+    fi
+}
+
+install_docker() {
+    if [[ $(id -u) -ne 0 ]]; then
+        error "L'installation de Docker nécessite les droits root : sudo ${CMD_NAME} --docker"
+        exit 1
+    fi
+
+    if [[ ! -e /etc/fedora-release ]]; then
+        error "Ce script est prévu pour Fedora uniquement."
+        exit 1
+    fi
+
+    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
+
+    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — installation de Docker ===${C_RESET}"
+    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+
+    section "Docker CE"
+    docker_setup_repo
+    docker_remove_conflicts
+    run "Installation de Docker CE" dnf install -y "${DOCKER_PACKAGES[@]}"
+    docker_add_user_to_group
+    docker_verify
+
+    info "Le service n'est pas activé au démarrage. Pour le faire :"
+    info "  ${C_YELLOW}sudo systemctl enable --now docker${C_RESET}"
+}
+
+#===============================================================================
+# INSTANTANÉ BTRFS (--snapshot)
+#
+# Sur un système de fichiers Btrfs, un instantané se crée en une fraction de
+# seconde et n'occupe initialement aucun espace (copie sur écriture) : c'est
+# un filet de sécurité peu coûteux avant une mise à jour massive ou un
+# changement de pilote graphique.
+#
+# L'instantané est en lecture seule et rangé dans /.snapshots. Il ne
+# remplace pas une sauvegarde : il vit sur le même disque et disparaît avec
+# lui. C'est une protection contre une mise à jour ratée, pas contre une
+# panne matérielle.
+#===============================================================================
+
+readonly SNAPSHOT_DIR="/.snapshots"
+
+# Vrai si la racine est un système de fichiers Btrfs.
+root_is_btrfs() {
+    [[ "$(findmnt -no FSTYPE / 2>/dev/null)" == "btrfs" ]]
+}
+
+# Crée un instantané en lecture seule de la racine, horodaté.
+create_snapshot() {
+    if ! root_is_btrfs; then
+        info "${C_YELLOW}La racine n'est pas en Btrfs : instantané impossible.${C_RESET}"
+        info "${C_YELLOW}(Sur ext4/xfs, utilisez plutôt une sauvegarde classique.)${C_RESET}"
+        return 0
+    fi
+
+    if ! has_cmd btrfs; then
+        info "Commande btrfs introuvable : instantané ignoré."
+        return 0
+    fi
+
+    local name="${SNAPSHOT_DIR}/root_$(date '+%Y%m%d-%H%M%S')"
+
+    if [[ ! -d "$SNAPSHOT_DIR" ]]; then
+        run "Création du dossier ${SNAPSHOT_DIR}" \
+            btrfs subvolume create "$SNAPSHOT_DIR"
+    fi
+
+    if run "Instantané Btrfs de /" btrfs subvolume snapshot -r / "$name"; then
+        info "Instantané : ${C_GREEN}${name}${C_RESET}"
+        info "Lister : ${C_YELLOW}sudo btrfs subvolume list /${C_RESET}"
+        info "Supprimer : ${C_YELLOW}sudo btrfs subvolume delete ${name}${C_RESET}"
+        info "${C_YELLOW}Note : un instantané n'est pas une sauvegarde (même disque).${C_RESET}"
+    fi
+}
+
+#===============================================================================
+# RÉCAPITULATIF ET INTERRUPTIONS
+#
+# Le script enchaîne des centaines de commandes dont la sortie défile : sans
+# récapitulatif, une erreur survenue tôt passe inaperçue. summary() est
+# appelée aussi bien en fin normale que sur interruption (Ctrl-C), afin que
+# l'utilisateur sache toujours ce qui a réellement été fait.
+#===============================================================================
+
+summary() {
+    section "Récapitulatif"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        info "Mode simulation : ${C_BLUE}${COUNT_SKIPPED}${C_RESET} commande(s) affichée(s), aucune exécutée."
+        info "Relancez sans --dry-run pour appliquer réellement les changements."
+        return
+    fi
+
+    info "Réussites : ${C_GREEN}${COUNT_OK}${C_RESET}"
+
+    if [[ $COUNT_FAIL -eq 0 ]]; then
+        info "Échecs    : ${C_GREEN}0${C_RESET}"
+    else
+        info "Échecs    : ${C_RED}${COUNT_FAIL}${C_RESET}"
+        local action
+        for action in "${FAILED_ACTIONS[@]}"; do
+            info "  ${C_RED}✗${C_RESET} ${action}"
+        done
+        info "Détail complet : ${C_YELLOW}${LOG_FILE}${C_RESET}"
+    fi
+}
+
+# Interruption (Ctrl-C) : on affiche ce qui a été fait avant de quitter,
+# plutôt que de laisser l'utilisateur devant un terminal muet.
+on_interrupt() {
+    echo ""
+    error "Interruption demandée (Ctrl-C)."
+    log "Script interrompu par l'utilisateur"
+    summary
+    exit 130
 }
 
 #===============================================================================
@@ -930,11 +2285,24 @@ parse_args() {
             --no-gnome-ext) DO_GNOME_EXT=0; shift ;;
             -y|--yes)      ASSUME_YES=1; shift ;;
             -q|--quiet)    VERBOSE=0; shift ;;
+            -n|--dry-run)  DRY_RUN=1; shift ;;
+            --snapshot)    DO_SNAPSHOT=1; shift ;;
             -v|--version)  echo "$VERSION"; exit 0 ;;
             --install)     install_command; exit 0 ;;
             --update)      update_command; exit 0 ;;
             --uninstall)   uninstall_command; exit 0 ;;
             --bashrc)      install_bashrc; exit 0 ;;
+            --docker)      install_docker; exit 0 ;;
+            # Ces actions sont mémorisées et non exécutées ici : le reste de
+            # la ligne de commande doit d'abord être lu, faute de quoi un
+            # « --clean --dry-run » lancerait le nettoyage pour de vrai,
+            # DRY_RUN n'étant pas encore positionné.
+            --clean)       ACTION="clean_system"; shift ;;
+            --memory)      ACTION="optimize_memory"; shift ;;
+            --boot)        ACTION="optimize_boot"; shift ;;
+            --laptop)      ACTION="optimize_laptop"; shift ;;
+            --security)    ACTION="secure_system"; shift ;;
+            --devtools)    ACTION="install_devtools"; shift ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac
@@ -948,8 +2316,28 @@ parse_args() {
 main() {
     parse_args "$@"
 
+    # Installé après parse_args : --help et --version doivent pouvoir sortir
+    # sans déclencher le récapitulatif.
+    trap on_interrupt INT TERM
+
+    # Action autonome (--clean, --memory, --boot…) : elle remplace le flux
+    # de post-installation et bénéficie du récapitulatif comme lui.
+    if [[ -n "$ACTION" ]]; then
+        "$ACTION"
+        summary
+        [[ $COUNT_FAIL -eq 0 ]]
+        return
+    fi
+
     echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — post-installation & maintenance ===${C_RESET}"
+
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo -e "${C_BLUE}Mode simulation : aucune modification ne sera appliquée.${C_RESET}"
+    fi
+
     checks
+
+    [[ $DO_SNAPSHOT -eq 1 ]] && { section "Instantané Btrfs"; create_snapshot; }
 
     configure_dnf
     setup_repos
@@ -964,7 +2352,14 @@ main() {
     [[ $DO_LISTS -eq 1 ]]    && install_lists
     [[ $DO_GNOME_EXT -eq 1 ]] && install_gnome_extensions
 
-    ask_reboot
+    summary
+
+    # En simulation, proposer un redémarrage n'aurait aucun sens.
+    [[ $DRY_RUN -eq 0 ]] && ask_reboot
+
+    # Code de sortie non nul si au moins une action a échoué : permet
+    # d'enchaîner le script dans une automatisation.
+    [[ $COUNT_FAIL -eq 0 ]]
 }
 
 main "$@"

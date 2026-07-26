@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fedora Setup — post-installation et maintenance</title>
+<meta name="description" content="Script de post-installation et de maintenance pour Fedora Workstation : mises à jour, pilotes, nettoyage, autonomie et sécurité.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="sidebar">
+    <a class="brand" href="index.html">
+        <strong>Fedora Setup</strong>
+        <span data-version>v0.2.1</span>
+    </a>
+
+    <div class="nav-group">
+        <div class="nav-title">Documentation</div>
+        <a href="index.html" class="current">Présentation</a>
+        <a href="options.html">Référence des options</a>
+        <a href="guides.html">Guides d'usage</a>
+        <a href="troubleshooting.html">Dépannage</a>
+    </div>
+
+    <div class="nav-group">
+        <div class="nav-title">Sur cette page</div>
+        <a href="#quoi">Ce que fait le script</a>
+        <a href="#demarrage">Démarrage rapide</a>
+        <a href="#installation">Installation système</a>
+        <a href="#listes">Listes de paquets</a>
+        <a href="#principes">Principes de conception</a>
+    </div>
+
+    <div class="nav-group">
+        <div class="nav-title">Dépôt</div>
+        <a href="https://github.com/William-De71/Fedora-Setup">GitHub</a>
+    </div>
+</nav>
+
+<main class="content">
+
+    <div class="stack">
+        <div class="eyebrow">Fedora Workstation</div>
+        <h1>Post-installation et maintenance, sans refaire les mêmes gestes</h1>
+        <p class="lede">
+            Un script unique qui configure une Fedora fraîchement installée, puis
+            l'entretient dans la durée : dépôts, pilotes graphiques détectés
+            automatiquement, paquets, nettoyage, autonomie et sécurité.
+        </p>
+        <div class="meta">
+            <span>Bash</span>
+            <span>Licence MIT</span>
+            <span>Fedora 40+</span>
+        </div>
+    </div>
+
+    <div class="note safe">
+        <div class="note-label">Sans risque à l'essai</div>
+        <p>
+            L'option <code>--dry-run</code> affiche exactement ce que le script
+            ferait, sans rien modifier — et fonctionne <strong>sans
+            <code>sudo</code></strong>, pour que vous puissiez l'auditer avant de
+            lui confier les droits root.
+        </p>
+    </div>
+
+    <h2 id="quoi">Ce que fait le script</h2>
+
+    <p>
+        Lancé sans option, <code>fedora-setup</code> déroule un flux complet de
+        post-installation. Chaque étape est idempotente : relancer le script ne
+        refait que ce qui est nécessaire.
+    </p>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Étape</th><th>Détail</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><strong>Configuration DNF</strong></td>
+                    <td>Téléchargements parallèles, miroir le plus rapide, 2 noyaux conservés. N'écrase jamais une valeur déjà présente.</td>
+                </tr>
+                <tr>
+                    <td><strong>Dépôts</strong></td>
+                    <td>RPM Fusion free et nonfree (+ tainted), openh264 Cisco, Flathub. Dépôts tiers optionnels via <code>repos.list</code>.</td>
+                </tr>
+                <tr>
+                    <td><strong>Mises à jour</strong></td>
+                    <td>Paquets RPM, Flatpaks et firmwares (<code>fwupd</code>).</td>
+                </tr>
+                <tr>
+                    <td><strong>Pilotes graphiques</strong></td>
+                    <td>Détection par <code>lspci</code>, cumulable sur les GPU hybrides : NVIDIA (<code>akmod</code>, CUDA, VAAPI), Intel (<code>intel-media-driver</code>), AMD (Mesa freeworld).</td>
+                </tr>
+                <tr>
+                    <td><strong>Codecs</strong></td>
+                    <td>ffmpeg complet en remplacement de <code>ffmpeg-free</code>, groupes multimédia RPM Fusion.</td>
+                </tr>
+                <tr>
+                    <td><strong>Paquets</strong></td>
+                    <td>Installation et suppression de RPM et de Flatpaks depuis vos propres listes.</td>
+                </tr>
+                <tr>
+                    <td><strong>Extensions GNOME</strong></td>
+                    <td>Installées par UUID via <code>gnome-extensions-cli</code>, pour l'utilisateur réel derrière le <code>sudo</code>.</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p>
+        À côté de ce flux, <strong>huit options autonomes</strong> ne s'exécutent
+        jamais d'elles-mêmes : elles font leur travail puis s'arrêtent.
+    </p>
+
+    <div class="cards">
+        <a class="card" href="options.html#clean">
+            <span class="cmd">--clean</span>
+            <h3>Nettoyage</h3>
+            <p>Cache DNF, journal systemd, vieux noyaux, TRIM. Affiche l'espace récupéré.</p>
+        </a>
+        <a class="card" href="options.html#memory">
+            <span class="cmd">--memory</span>
+            <h3>Réactivité mémoire</h3>
+            <p>Adapte les réglages du noyau au swap zram de Fedora.</p>
+        </a>
+        <a class="card" href="options.html#boot">
+            <span class="cmd">--boot</span>
+            <h3>Démarrage</h3>
+            <p>Mesure le temps de boot et propose d'en retirer le superflu.</p>
+        </a>
+        <a class="card" href="options.html#laptop">
+            <span class="cmd">--laptop</span>
+            <h3>Autonomie</h3>
+            <p>TLP ou power-profiles-daemon, thermald, powertop.</p>
+        </a>
+        <a class="card" href="options.html#security">
+            <span class="cmd">--security</span>
+            <h3>Sécurité</h3>
+            <p>SELinux, pare-feu, mises à jour automatiques, DNS chiffré.</p>
+        </a>
+        <a class="card" href="options.html#devtools">
+            <span class="cmd">--devtools</span>
+            <h3>Développement</h3>
+            <p>distrobox, virtualisation KVM, polices libres.</p>
+        </a>
+        <a class="card" href="options.html#docker">
+            <span class="cmd">--docker</span>
+            <h3>Docker CE</h3>
+            <p>Dépôt officiel Docker, avec buildx et compose v2.</p>
+        </a>
+        <a class="card" href="options.html#bashrc">
+            <span class="cmd">--bashrc</span>
+            <h3>Bashrc</h3>
+            <p>Installe un <code>~/.bashrc</code> personnalisé, en sauvegardant l'ancien.</p>
+        </a>
+    </div>
+
+    <h2 id="demarrage">Démarrage rapide</h2>
+
+    <p>Récupérez le dépôt, puis regardez ce que le script ferait avant de le lancer :</p>
+
+<pre><code><span class="prompt">$</span> git clone https://github.com/William-De71/Fedora-Setup.git
+<span class="prompt">$</span> cd Fedora-Setup
+
+<span class="cmt"># Simulation — ne modifie rien, ne demande pas sudo</span>
+<span class="prompt">$</span> ./fedora-setup.sh --dry-run
+
+<span class="cmt"># Exécution réelle</span>
+<span class="prompt">$</span> sudo ./fedora-setup.sh</code></pre>
+
+    <p>
+        La simulation affiche chaque commande précédée de <code>$</code>, puis un
+        récapitulatif :
+    </p>
+
+<pre><code>    Suppression des paquets orphelins : <span class="sim">simulé</span>
+        <span class="prompt">$</span> dnf autoremove -y
+
+==&gt; Récapitulatif
+    Mode simulation : 7 commande(s) affichée(s), aucune exécutée.</code></pre>
+
+    <div class="note">
+        <div class="note-label">Avant une grosse mise à jour</div>
+        <p>
+            Sur une racine Btrfs — le cas par défaut sur Fedora Workstation —
+            <code>--snapshot</code> prend un instantané de <code>/</code> avant
+            toute modification. L'opération est quasi instantanée et n'occupe
+            initialement aucun espace.
+        </p>
+    </div>
+
+    <h2 id="installation">Installation en tant que commande système</h2>
+
+    <p>
+        Pour appeler <code>fedora-setup</code> depuis n'importe quel dossier au
+        lieu de <code>./fedora-setup.sh</code> :
+    </p>
+
+<pre><code><span class="prompt">$</span> sudo ./fedora-setup.sh --install</code></pre>
+
+    <p>Le script est copié dans <code>/opt/fedora-setup</code> et lié dans le <code>PATH</code>. Ensuite, depuis n'importe où :</p>
+
+<pre><code><span class="prompt">$</span> sudo fedora-setup            <span class="cmt"># exécution complète</span>
+<span class="prompt">$</span> fedora-setup --help          <span class="cmt"># aide</span>
+<span class="prompt">$</span> sudo fedora-setup --update   <span class="cmt"># dernière version publiée</span></code></pre>
+
+    <p>
+        Si le dépôt source a un remote <code>origin</code>, <code>--install</code>
+        clone plutôt que copier, ce qui rend <code>--update</code> disponible.
+        Cette dernière suit toujours la <strong>dernière release taggée</strong>,
+        jamais un commit intermédiaire.
+    </p>
+
+    <div class="note warn">
+        <div class="note-label">À savoir</div>
+        <p>
+            <code>--install</code> <strong>régénère toujours</strong> vos listes
+            de paquets depuis les gabarits : c'est une remise à zéro volontaire.
+            <code>--update</code>, lui, n'y touche jamais.
+        </p>
+    </div>
+
+    <h2 id="listes">Listes de paquets</h2>
+
+    <p>
+        Le dépôt ne versionne que des gabarits <code>*.list.example</code>. Les
+        fichiers réels sont créés une fois à partir d'eux, puis vous appartiennent :
+        aucune mise à jour ne les modifie.
+    </p>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Fichier</th><th>Contenu</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>rpm.list</code></td><td>Paquets RPM à installer ou supprimer</td></tr>
+                <tr><td><code>flatpak.list</code></td><td>Applications Flatpak (identifiant complet)</td></tr>
+                <tr><td><code>repos.list</code></td><td>Dépôts tiers : <code>nom | clé GPG | URL du .repo</code></td></tr>
+                <tr><td><code>gnome-extensions.list</code></td><td>Extensions GNOME Shell, par UUID</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p>Une entrée par ligne, syntaxe commune à <code>rpm.list</code> et <code>flatpak.list</code> :</p>
+
+<pre><code>add:paquet     <span class="cmt"># installe</span>
+del:paquet     <span class="cmt"># supprime</span>
+paquet         <span class="cmt"># équivalent à add:</span>
+<span class="cmt"># commentaire — ignoré, lignes vides ignorées</span></code></pre>
+
+    <p>
+        Voir le <a href="guides.html#listes">guide des listes</a> pour les
+        dépôts tiers et les extensions GNOME.
+    </p>
+
+    <h2 id="principes">Principes de conception</h2>
+
+    <p>
+        Ces règles expliquent pourquoi le script se comporte comme il le fait, et
+        pourquoi il peut être lancé sans le surveiller.
+    </p>
+
+    <div class="stack">
+        <div class="note">
+            <div class="note-label">Constater avant de modifier</div>
+            <p>
+                Une option n'agit que si le contexte s'y prête. <code>cups</code>
+                n'est proposé à la désactivation que si aucune imprimante n'est
+                configurée ; le DNS chiffré est ignoré si votre résolveur est
+                local ; TLP et power-profiles-daemon ne sont jamais installés
+                ensemble.
+            </p>
+        </div>
+
+        <div class="note">
+            <div class="note-label">Réversible par défaut</div>
+            <p>
+                Les services sont désactivés, jamais masqués. Les fichiers de
+                configuration modifiés sont sauvegardés en <code>.bak</code>. Chaque
+                option affiche la commande qui annule son effet.
+            </p>
+        </div>
+
+        <div class="note">
+            <div class="note-label">Rien d'implicite</div>
+            <p>
+                Les huit options autonomes ne s'exécutent que si on les nomme. Un
+                <code>sudo fedora-setup</code> classique n'installe jamais Docker,
+                ne touche pas à votre <code>.bashrc</code> et ne désactive aucun
+                service.
+            </p>
+        </div>
+
+        <div class="note">
+            <div class="note-label">Traçable</div>
+            <p>
+                Chaque exécution écrit un journal horodaté dans
+                <code>/var/log/fedora-setup_*.log</code>, et se termine par un
+                récapitulatif listant nommément les actions en échec.
+            </p>
+        </div>
+    </div>
+
+    <footer>
+        <div>Fedora Setup — script de post-installation pour Fedora Workstation.</div>
+        <div>Inspiré de <a href="https://github.com/aaaaadrien/fedora-config">fedora-config</a> et <a href="https://github.com/Gaming-Linux-FR/Fedora-GLF">Fedora-GLF</a>.</div>
+    </footer>
+
+</main>
+</div>
+</body>
+</html>

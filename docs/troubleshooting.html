@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dépannage — Fedora Setup</title>
+<meta name="description" content="Diagnostiquer une exécution en échec, annuler un réglage, comprendre les messages du script.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="sidebar">
+    <a class="brand" href="index.html">
+        <strong>Fedora Setup</strong>
+        <span data-version>v0.2.1</span>
+    </a>
+
+    <div class="nav-group">
+        <div class="nav-title">Documentation</div>
+        <a href="index.html">Présentation</a>
+        <a href="options.html">Référence des options</a>
+        <a href="guides.html">Guides d'usage</a>
+        <a href="troubleshooting.html" class="current">Dépannage</a>
+    </div>
+
+    <div class="nav-group">
+        <div class="nav-title">Sur cette page</div>
+        <a href="#journal">Lire le journal</a>
+        <a href="#annuler">Annuler un réglage</a>
+        <a href="#messages">Messages courants</a>
+        <a href="#nvidia">NVIDIA</a>
+        <a href="#codes">Codes de sortie</a>
+    </div>
+</nav>
+
+<main class="content">
+
+    <div class="stack">
+        <div class="eyebrow">Dépannage</div>
+        <h1>Quand quelque chose ne se passe pas comme prévu</h1>
+        <p class="lede">
+            Retrouver ce qui a échoué, annuler un réglage, comprendre ce que le
+            script vous dit.
+        </p>
+    </div>
+
+    <h2 id="journal">Lire le journal</h2>
+
+    <p>
+        Chaque exécution écrit un journal horodaté. C'est le premier endroit où
+        regarder.
+    </p>
+
+<pre><code><span class="prompt">$</span> ls -t /var/log/fedora-setup_*.log | head -1   <span class="cmt"># le plus récent</span>
+<span class="prompt">$</span> tail -f /var/log/fedora-setup_*.log           <span class="cmt"># suivre en direct</span></code></pre>
+
+    <p>
+        À la fin de chaque exécution, un récapitulatif liste <strong>nommément
+        les actions en échec</strong> — inutile de remonter des centaines de
+        lignes de sortie DNF :
+    </p>
+
+<pre><code>==&gt; Récapitulatif
+    Réussites : 12
+    Échecs    : 1
+      ✗ Installation RPM paquet-inexistant
+    Détail complet : /var/log/fedora-setup_20260726-101500.log</code></pre>
+
+    <div class="note">
+        <div class="note-label">En simulation</div>
+        <p>
+            Lancé sans <code>sudo</code> avec <code>--dry-run</code>, le journal
+            est écrit dans <code>/tmp</code> au lieu de <code>/var/log</code>, ce
+            dernier n'étant accessible qu'à root.
+        </p>
+    </div>
+
+    <h2 id="annuler">Annuler un réglage</h2>
+
+    <p>
+        Chaque option est réversible. Le script affiche la commande d'annulation
+        au moment où il applique le changement ; les voici rassemblées.
+    </p>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Réglage</th><th>Pour l'annuler</th></tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Réglages mémoire (<code>--memory</code>)</td>
+                    <td><code>sudo rm /etc/sysctl.d/99-fedora-setup-memory.conf</code> puis redémarrer</td>
+                </tr>
+                <tr>
+                    <td>Plafond du journal (<code>--clean</code>)</td>
+                    <td><code>sudo rm /etc/systemd/journald.conf.d/99-fedora-setup.conf</code></td>
+                </tr>
+                <tr>
+                    <td>Service désactivé (<code>--boot</code>)</td>
+                    <td><code>sudo systemctl enable &lt;service&gt;</code></td>
+                </tr>
+                <tr>
+                    <td>Délai GRUB (<code>--boot</code>)</td>
+                    <td><code>sudo cp /etc/default/grub.bak /etc/default/grub</code> puis <code>sudo grub2-mkconfig -o /boot/grub2/grub.cfg</code></td>
+                </tr>
+                <tr>
+                    <td>powertop au démarrage (<code>--laptop</code>)</td>
+                    <td><code>sudo systemctl disable --now powertop-autotune</code></td>
+                </tr>
+                <tr>
+                    <td>TLP au profit de PPD (<code>--laptop</code>)</td>
+                    <td><code>sudo systemctl unmask power-profiles-daemon</code> puis désactiver TLP</td>
+                </tr>
+                <tr>
+                    <td>DNS chiffré (<code>--security</code>)</td>
+                    <td><code>sudo rm /etc/systemd/resolved.conf.d/99-fedora-setup-dot.conf</code> puis <code>sudo systemctl restart systemd-resolved</code></td>
+                </tr>
+                <tr>
+                    <td>Groupe docker (<code>--docker</code>)</td>
+                    <td><code>sudo gpasswd -d $USER docker</code></td>
+                </tr>
+                <tr>
+                    <td>Ancien <code>.bashrc</code> (<code>--bashrc</code>)</td>
+                    <td><code>cp ~/.bashrc.bak ~/.bashrc</code></td>
+                </tr>
+                <tr>
+                    <td>Instantané Btrfs (<code>--snapshot</code>)</td>
+                    <td><code>sudo btrfs subvolume delete /.snapshots/root_...</code></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2 id="messages">Messages courants</h2>
+
+    <div class="stack">
+
+        <div class="opt">
+            <div class="opt-head"><h3>Cette opération nécessite les droits root</h3></div>
+            <p>
+                Les options qui modifient le système exigent <code>sudo</code>.
+                Pour les examiner sans privilèges, ajoutez
+                <code>--dry-run</code> :
+            </p>
+<pre><code><span class="prompt">$</span> ./fedora-setup.sh --clean --dry-run</code></pre>
+        </div>
+
+        <div class="opt">
+            <div class="opt-head"><h3>Pas de connexion réseau</h3></div>
+            <p>
+                Le script vérifie qu'il peut joindre <code>fedoraproject.org</code>
+                avant de commencer, puisque presque tout passe par le réseau. Si
+                votre réseau bloque les requêtes <code>ping</code> alors que la
+                connexion fonctionne, c'est un faux positif — vérifiez avec
+                <code>curl -I https://fedoraproject.org</code>.
+            </p>
+        </div>
+
+        <div class="opt">
+            <div class="opt-head"><h3>Installation non-git : impossible de mettre à jour</h3></div>
+            <p>
+                <code>--update</code> exige que l'installation ait été faite depuis
+                un clone avec un remote <code>origin</code>. Sans cela,
+                <code>--install</code> se contente de copier les fichiers.
+                Relancez <code>--install</code> depuis un clone à jour.
+            </p>
+        </div>
+
+        <div class="opt">
+            <div class="opt-head"><h3>Aucune batterie détectée</h3></div>
+            <p>
+                <code>--laptop</code> vise l'autonomie et peut brider les
+                performances. Sur un poste fixe, le script demande confirmation
+                avant de continuer — répondez <code>n</code> si l'option a été
+                lancée par erreur.
+            </p>
+        </div>
+
+        <div class="opt">
+            <div class="opt-head"><h3>Ce résolveur est local — étape ignorée</h3></div>
+            <p>
+                Ce n'est pas une erreur. Votre DNS est une adresse privée, donc un
+                résolveur de box ou d'entreprise qui répond pour des noms internes.
+                Le remplacer par un résolveur public casserait l'accès à ces
+                ressources : le script s'abstient délibérément.
+            </p>
+        </div>
+
+        <div class="opt">
+            <div class="opt-head"><h3>Étape ignorée : utilisateur cible inconnu</h3></div>
+            <p>
+                Les extensions GNOME, <code>--bashrc</code> et les ajouts de groupe
+                s'appliquent à l'utilisateur réel, identifié via la variable que
+                <code>sudo</code> renseigne. Lancé en root direct — après un
+                <code>su -</code> par exemple — cette variable n'existe pas.
+                Lancez le script avec <code>sudo</code> depuis votre session.
+            </p>
+        </div>
+
+    </div>
+
+    <h2 id="nvidia">NVIDIA</h2>
+
+    <div class="note warn">
+        <div class="note-label">Ne redémarrez pas tout de suite</div>
+        <p>
+            Le module noyau est compilé en arrière-plan par <code>akmods</code>,
+            ce qui prend environ cinq minutes. Redémarrer avant la fin donne un
+            démarrage sans accélération graphique.
+        </p>
+    </div>
+
+    <p>Vérifier que le module est prêt :</p>
+
+<pre><code><span class="prompt">$</span> modinfo -F version nvidia</code></pre>
+
+    <p>
+        Si la commande ne renvoie rien, la compilation est en cours ou a échoué.
+        Consultez alors <code>/var/log/akmods/</code>.
+    </p>
+
+    <h3>Secure Boot</h3>
+
+    <p>
+        Si Secure Boot est actif, un module non signé est refusé au démarrage. Le
+        script le signale lors de l'installation. La procédure de signature est
+        décrite par
+        <a href="https://rpmfusion.org/Howto/Secure%20Boot">RPM Fusion</a>.
+    </p>
+
+<pre><code><span class="prompt">$</span> mokutil --sb-state   <span class="cmt"># état de Secure Boot</span></code></pre>
+
+    <h2 id="codes">Codes de sortie</h2>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr><th>Code</th><th>Signification</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>0</code></td><td>Terminé sans échec</td></tr>
+                <tr><td><code>1</code></td><td>Au moins une action a échoué, ou vérification préalable non satisfaite (droits, distribution, réseau)</td></tr>
+                <tr><td><code>130</code></td><td>Interrompu au clavier. Le récapitulatif est affiché avant de quitter, pour savoir ce qui a déjà été fait</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <p>
+        Ces codes rendent le script utilisable dans une automatisation : un
+        <code>sudo fedora-setup --yes --quiet</code> qui renvoie autre chose que
+        <code>0</code> signale qu'il faut regarder le journal.
+    </p>
+
+    <footer>
+        <div>Fedora Setup — <a href="index.html">présentation</a> · <a href="options.html">options</a> · <a href="guides.html">guides</a></div>
+    </footer>
+
+</main>
+</div>
+</body>
+</html>

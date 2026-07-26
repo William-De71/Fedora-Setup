@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guides d'usage — Fedora Setup</title>
+<meta name="description" content="Parcours concrets : nouvelle installation, entretien mensuel, portable, poste de développement, listes de paquets.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+
+<nav class="sidebar">
+    <a class="brand" href="index.html">
+        <strong>Fedora Setup</strong>
+        <span data-version>v0.2.1</span>
+    </a>
+
+    <div class="nav-group">
+        <div class="nav-title">Documentation</div>
+        <a href="index.html">Présentation</a>
+        <a href="options.html">Référence des options</a>
+        <a href="guides.html" class="current">Guides d'usage</a>
+        <a href="troubleshooting.html">Dépannage</a>
+    </div>
+
+    <div class="nav-group">
+        <div class="nav-title">Parcours</div>
+        <a href="#neuf">Fedora fraîchement installée</a>
+        <a href="#entretien">Entretien régulier</a>
+        <a href="#portable">Portable</a>
+        <a href="#dev">Poste de développement</a>
+        <a href="#listes">Personnaliser les listes</a>
+        <a href="#plusieurs">Plusieurs machines</a>
+    </div>
+</nav>
+
+<main class="content">
+
+    <div class="stack">
+        <div class="eyebrow">Guides</div>
+        <h1>Parcours par situation</h1>
+        <p class="lede">
+            Quelles options utiliser, dans quel ordre, selon ce que vous avez
+            devant vous.
+        </p>
+    </div>
+
+    <h2 id="neuf">Une Fedora fraîchement installée</h2>
+
+    <p>
+        Le parcours le plus courant. Commencez par regarder ce qui va se passer,
+        sans rien modifier ni saisir de mot de passe :
+    </p>
+
+<pre><code><span class="prompt">$</span> git clone https://github.com/William-De71/Fedora-Setup.git
+<span class="prompt">$</span> cd Fedora-Setup
+<span class="prompt">$</span> ./fedora-setup.sh --dry-run</code></pre>
+
+    <p>
+        Adaptez ensuite les listes à vos besoins — voir
+        <a href="#listes">personnaliser les listes</a> — puis lancez le flux
+        complet :
+    </p>
+
+<pre><code><span class="prompt">$</span> sudo ./fedora-setup.sh</code></pre>
+
+    <p>
+        Le script pose des questions pour les dépôts tiers. Répondez au fur et à
+        mesure, ou utilisez <code>--yes</code> pour tout accepter sans
+        interruption.
+    </p>
+
+    <h3>Puis, selon la machine</h3>
+
+<pre><code><span class="prompt">$</span> sudo fedora-setup --memory     <span class="cmt"># réactivité (toutes machines)</span>
+<span class="prompt">$</span> sudo fedora-setup --laptop     <span class="cmt"># si portable</span>
+<span class="prompt">$</span> sudo fedora-setup --boot       <span class="cmt"># si le démarrage traîne</span>
+<span class="prompt">$</span> sudo fedora-setup --security   <span class="cmt"># vérification des protections</span></code></pre>
+
+    <div class="note warn">
+        <div class="note-label">Carte NVIDIA</div>
+        <p>
+            Le module noyau est compilé en arrière-plan par <code>akmods</code> :
+            <strong>attendez environ cinq minutes avant de redémarrer</strong>
+            après la première installation. Vérifiez avec
+            <code>modinfo -F version nvidia</code>. Si Secure Boot est actif, le
+            module doit être signé —
+            <a href="https://rpmfusion.org/Howto/Secure%20Boot">procédure RPM Fusion</a>.
+        </p>
+    </div>
+
+    <h2 id="entretien">Entretien régulier</h2>
+
+    <p>
+        Le script est idempotent : le relancer ne refait que le nécessaire. Une
+        passe de mise à jour sans toucher au reste :
+    </p>
+
+<pre><code><span class="prompt">$</span> sudo fedora-setup --no-gpu --no-lists --no-repos</code></pre>
+
+    <p>Et de temps en temps, pour récupérer de l'espace :</p>
+
+<pre><code><span class="prompt">$</span> sudo fedora-setup --clean</code></pre>
+
+    <p>
+        Sur une machine utilisée quotidiennement depuis quelques mois, il n'est
+        pas rare que <code>--clean</code> libère plusieurs gigaoctets : le cache
+        DNF approche souvent le gigaoctet et le journal systemd peut occuper
+        jusqu'à 10 % de <code>/var</code> avant d'être plafonné.
+    </p>
+
+    <div class="note">
+        <div class="note-label">Avant une mise à jour importante</div>
+        <p>
+            Sur racine Btrfs, prenez un filet de sécurité :
+            <code>sudo fedora-setup --snapshot</code>. L'instantané est quasi
+            instantané et n'occupe initialement aucun espace.
+        </p>
+    </div>
+
+    <h2 id="portable">Portable</h2>
+
+    <p>Trois options se complètent sur une machine sur batterie :</p>
+
+<pre><code><span class="prompt">$</span> sudo fedora-setup --laptop   <span class="cmt"># gestionnaire d'énergie, thermald, powertop</span>
+<span class="prompt">$</span> sudo fedora-setup --memory   <span class="cmt"># réactivité sous charge</span>
+<span class="prompt">$</span> sudo fedora-setup --boot     <span class="cmt"># démarrage plus rapide</span></code></pre>
+
+    <p>
+        <a href="options.html#laptop"><code>--laptop</code></a> vous fait choisir
+        entre TLP et <code>power-profiles-daemon</code>. Si vous tenez au
+        sélecteur de profil dans le menu système de GNOME, gardez
+        <code>power-profiles-daemon</code>. Si vous voulez le maximum d'autonomie
+        et acceptez de configurer, choisissez TLP.
+    </p>
+
+    <p>Pour mesurer ensuite :</p>
+
+<pre><code><span class="prompt">$</span> sudo powertop        <span class="cmt"># consommation par composant</span>
+<span class="prompt">$</span> sudo tlp-stat -s     <span class="cmt"># état de TLP, si installé</span>
+<span class="prompt">$</span> systemd-analyze      <span class="cmt"># temps de démarrage</span></code></pre>
+
+    <h2 id="dev">Poste de développement</h2>
+
+<pre><code><span class="prompt">$</span> sudo fedora-setup --devtools   <span class="cmt"># distrobox, KVM, polices</span>
+<span class="prompt">$</span> sudo fedora-setup --docker     <span class="cmt"># Docker CE officiel</span>
+<span class="prompt">$</span> sudo fedora-setup --bashrc     <span class="cmt"># prompt et PATH personnalisés</span></code></pre>
+
+    <p>
+        <a href="options.html#devtools"><code>--devtools</code></a> propose chaque
+        outil séparément : vous pouvez ne prendre que les polices, ou seulement la
+        virtualisation.
+    </p>
+
+    <div class="note">
+        <div class="note-label">distrobox ou toolbox ?</div>
+        <p>
+            Fedora fournit déjà <code>toolbox</code>, qui crée des conteneurs de
+            développement à partir d'<strong>images Fedora uniquement</strong>.
+            distrobox fait la même chose avec n'importe quelle distribution —
+            utile pour reproduire un environnement Ubuntu ou Debian de production.
+            Les deux cohabitent sans conflit.
+        </p>
+    </div>
+
+    <p>Créer un conteneur jetable après installation :</p>
+
+<pre><code><span class="prompt">$</span> distrobox create --name dev --image fedora:latest
+<span class="prompt">$</span> distrobox enter dev</code></pre>
+
+    <div class="note warn">
+        <div class="note-label">Groupes docker et libvirt</div>
+        <p>
+            Ces deux options ajoutent votre compte à un groupe système. Le
+            changement ne prend effet qu'après une <strong>déconnexion et
+            reconnexion</strong> de la session — pas seulement la fermeture du
+            terminal.
+        </p>
+    </div>
+
+    <h2 id="listes">Personnaliser les listes</h2>
+
+    <p>
+        Le dépôt ne versionne que des gabarits <code>*.list.example</code>. Les
+        fichiers réels sont créés une fois à partir d'eux, puis vous appartiennent :
+        <code>--update</code> ne les modifie jamais.
+    </p>
+
+    <h3>Paquets RPM et Flatpak</h3>
+
+<pre><code><span class="cmt"># rpm.list</span>
+add:htop
+add:neovim
+del:libreoffice-core     <span class="cmt"># retire ce qui ne sert pas</span>
+
+<span class="cmt"># flatpak.list — identifiant complet</span>
+add:org.gnome.Boxes
+add:com.spotify.Client</code></pre>
+
+    <p>
+        Trouvez l'identifiant d'un Flatpak sur
+        <a href="https://flathub.org">flathub.org</a> ou avec
+        <code>flatpak search &lt;nom&gt;</code>.
+    </p>
+
+    <h3>Dépôts tiers</h3>
+
+    <p>
+        Certaines applications — Vivaldi, VS Code, Sublime Text — ne sont pas dans
+        les dépôts Fedora. Une ligne par dépôt, trois champs séparés par
+        <code>|</code> :
+    </p>
+
+<pre><code>nom | url_de_la_cle_gpg | url_du_fichier.repo</code></pre>
+
+    <p>Par exemple :</p>
+
+<pre><code>vivaldi | https://repo.vivaldi.com/archive/linux_signing_key.pub | https://repo.vivaldi.com/archive/vivaldi-fedora.repo</code></pre>
+
+    <p>
+        Le script demande pour chaque dépôt s'il faut l'ajouter. Une fois accepté,
+        installez ses paquets comme les autres via <code>rpm.list</code> — par
+        exemple <code>add:vivaldi-stable</code>. Ces lignes sont déjà présentes,
+        commentées, dans le gabarit.
+    </p>
+
+    <p>Pour retrouver l'URL et la clé d'un dépôt déjà présent sur votre machine :</p>
+
+<pre><code><span class="prompt">$</span> grep -E 'baseurl|gpgkey|^\[' /etc/yum.repos.d/*.repo</code></pre>
+
+    <h3>Extensions GNOME</h3>
+
+    <p>
+        Une entrée par ligne, avec l'UUID de l'extension — visible dans l'URL de
+        sa page sur <a href="https://extensions.gnome.org">extensions.gnome.org</a> :
+    </p>
+
+<pre><code>add:dash-to-panel@jderose9.github.com
+del:background-logo@fedorahosted.org</code></pre>
+
+    <div class="note">
+        <div class="note-label">Pourquoi lancer via sudo et non en root</div>
+        <p>
+            Les extensions GNOME sont un concept <strong>par utilisateur</strong> :
+            elles vivent dans <code>~/.local/share</code> et dans les réglages de
+            session. Le script détecte l'utilisateur réel derrière le
+            <code>sudo</code> et exécute les commandes en son nom. Lancé en root
+            direct, cette variable n'existe pas et l'étape est ignorée.
+        </p>
+    </div>
+
+    <h2 id="plusieurs">Plusieurs machines</h2>
+
+    <p>
+        Les options <code>-r</code>, <code>-f</code>, <code>-d</code> et
+        <code>-e</code> acceptent des chemins arbitraires : gardez une liste par
+        machine dans le même dépôt.
+    </p>
+
+<pre><code><span class="prompt">$</span> sudo ./fedora-setup.sh -r listes/thinkpad.rpm.list \
+                          -f listes/thinkpad.flatpak.list</code></pre>
+
+    <p>
+        Pour une installation non surveillée, combinez <code>--yes</code> et
+        <code>--quiet</code> : aucune question, affichage compact, détails dans le
+        journal.
+    </p>
+
+<pre><code><span class="prompt">$</span> sudo ./fedora-setup.sh --yes --quiet</code></pre>
+
+    <p>
+        Le script renvoie un <strong>code de sortie non nul si au moins une action
+        a échoué</strong>, ce qui permet de l'enchaîner dans un script
+        d'automatisation.
+    </p>
+
+    <footer>
+        <div>Fedora Setup — <a href="options.html">référence des options</a> · <a href="troubleshooting.html">dépannage</a></div>
+    </footer>
+
+</main>
+</div>
+</body>
+</html>

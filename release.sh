@@ -20,6 +20,12 @@ readonly SCRIPT_DIR
 readonly TARGET_FILE="${SCRIPT_DIR}/fedora-setup.sh"
 readonly DEFAULT_BRANCH="master"
 
+# Pages de documentation affichant le numéro de version. Elles portent un
+# élément « <span data-version>vX.Y.Z</span> » dans la barre latérale : sans
+# cette mise à jour, le site publié annoncerait indéfiniment la version
+# figée au moment de sa rédaction.
+readonly DOCS_DIR="${SCRIPT_DIR}/docs"
+
 usage() {
     cat << EOF
 Usage : ./release.sh patch|minor|major
@@ -103,11 +109,25 @@ fi
 echo "Version actuelle : $current_version"
 echo "Nouvelle version : $new_version ($bump_type)"
 echo
+# « || true » indispensable : sous pipefail, un grep sans correspondance
+# ferait échouer le script avant même la demande de confirmation.
+doc_pages=0
+if [[ -d "$DOCS_DIR" ]]; then
+    doc_pages=$(grep -l '<span data-version>' "$DOCS_DIR"/*.html 2>/dev/null | wc -l || true)
+fi
+
 echo "Ceci va :"
 echo "  1. Modifier VERSION dans $(basename "$TARGET_FILE")"
-echo "  2. Commiter : « Release $tag »"
-echo "  3. Créer le tag $tag"
-echo "  4. Pousser $DEFAULT_BRANCH et $tag vers origin"
+if [[ $doc_pages -gt 0 ]]; then
+    echo "  2. Mettre à jour la version dans ${doc_pages} page(s) de docs/"
+    echo "  3. Commiter : « Release $tag »"
+    echo "  4. Créer le tag $tag"
+    echo "  5. Pousser $DEFAULT_BRANCH et $tag vers origin"
+else
+    echo "  2. Commiter : « Release $tag »"
+    echo "  3. Créer le tag $tag"
+    echo "  4. Pousser $DEFAULT_BRANCH et $tag vers origin"
+fi
 echo
 read -r -p "Confirmer ? [y/N] : " answer
 [[ "${answer,,}" == "y" ]] || { echo "Annulé."; exit 1; }
@@ -116,7 +136,34 @@ read -r -p "Confirmer ? [y/N] : " answer
 
 sed -i -E "s/^readonly VERSION=\"${current_version//./\\.}\"/readonly VERSION=\"${new_version}\"/" "$TARGET_FILE"
 
-git -C "$SCRIPT_DIR" add "$TARGET_FILE"
+# Vérification : le sed ci-dessus est silencieux s'il ne trouve rien.
+if ! grep -q "^readonly VERSION=\"${new_version}\"$" "$TARGET_FILE"; then
+    error "La version n'a pas pu être mise à jour dans $(basename "$TARGET_FILE")."
+    git -C "$SCRIPT_DIR" checkout -- "$TARGET_FILE"
+    exit 1
+fi
+
+files_to_commit=("$TARGET_FILE")
+
+# Répercuter la version dans la documentation. Le remplacement cible
+# l'attribut data-version : un numéro cité en exemple dans le texte n'est
+# jamais touché par erreur.
+if [[ -d "$DOCS_DIR" ]]; then
+    updated_docs=0
+    for page in "$DOCS_DIR"/*.html; do
+        [[ -e "$page" ]] || continue
+        if grep -q '<span data-version>' "$page"; then
+            sed -i -E "s|(<span data-version>)v[0-9]+\.[0-9]+\.[0-9]+(</span>)|\1v${new_version}\2|" "$page"
+            files_to_commit+=("$page")
+            updated_docs=$((updated_docs + 1))
+        fi
+    done
+    if [[ $updated_docs -gt 0 ]]; then
+        echo "Documentation mise à jour : ${updated_docs} page(s)"
+    fi
+fi
+
+git -C "$SCRIPT_DIR" add "${files_to_commit[@]}"
 git -C "$SCRIPT_DIR" commit -m "Release ${tag}"
 git -C "$SCRIPT_DIR" tag -a "$tag" -m "$tag"
 git -C "$SCRIPT_DIR" push origin "$DEFAULT_BRANCH"
