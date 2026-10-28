@@ -58,7 +58,7 @@ fi
 readonly SCRIPT_PATH SCRIPT_DIR SCRIPT_NAME LOG_FILE
 
 # Version du script (affichée par -v/--version et au démarrage)
-readonly VERSION="0.3.0"
+readonly VERSION="0.4.0"
 
 # Fichiers de listes par défaut (surchargables via -r / -f / -d / -e).
 # Ces fichiers *.list ne sont jamais versionnés (voir .gitignore) : ils sont
