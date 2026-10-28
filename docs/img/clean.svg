@@ -8,9 +8,9 @@
 <circle cx="60" cy="17" r="6" fill="#28c840"/>
 <text x="367" y="21" fill="#7f849c" text-anchor="middle">fedora-setup --clean</text>
 <text x="18" y="65" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">$ </tspan><tspan fill="#d6dbf5" class="b">fedora-setup --clean --dry-run</tspan></text>
-<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.5.0 — nettoyage &amp; maintenance ===</tspan></text>
+<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.6.0 — nettoyage &amp; maintenance ===</tspan></text>
 <text x="18" y="122" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb">Mode simulation : aucune modification ne sera appliquée.</tspan></text>
-<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal  : </tspan><tspan fill="#f9e2af">tail -f /tmp/fedora-setup_20261028-224949.log</tspan></text>
+<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal  : </tspan><tspan fill="#f9e2af">tail -f /tmp/fedora-setup_20261028-225852.log</tspan></text>
 <text x="18" y="179" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Paquets et cache DNF</tspan></text>
 <text x="18" y="198" fill="#d6dbf5" xml:space="preserve"><tspan>    Suppression des paquets orphelins : </tspan><tspan fill="#89dceb">simulé</tspan></text>
 <text x="18" y="217" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf autoremove -y</tspan></text>
