@@ -288,6 +288,12 @@
             </table>
         </div>
         <p>Si TLP est choisi alors que PPD est présent, ce dernier est masqué pour éviter le conflit.</p>
+        <p>
+            Depuis Fedora 41, le sélecteur de profil est fourni par
+            <code>tuned-ppd</code> (tuned + une couche compatible PPD). TLP
+            étant déclaré en conflit avec tuned, son installation retire alors
+            <code>tuned</code> et <code>tuned-ppd</code>.
+        </p>
         <h4>thermald</h4>
         <p>
             Sur processeur Intel : gestion thermique fine. Sans lui, le noyau ne

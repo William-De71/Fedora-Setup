@@ -1,0 +1,66 @@
+name: CI
+
+# Vérifie chaque push et chaque pull request : un script exécuté en root sur
+# des machines réelles ne doit jamais être publié sans ces garde-fous.
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: ShellCheck & cohérence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntaxe bash
+        run: |
+          bash -n fedora-setup.sh
+          bash -n release.sh
+          bash -n bashrc.example
+
+      - name: ShellCheck
+        run: shellcheck -S warning fedora-setup.sh release.sh
+
+      # release.sh met à jour la version du script ET de la documentation :
+      # une divergence signale une modification manuelle oubliée.
+      - name: Version identique dans le script et la documentation
+        run: |
+          version="$(grep -m1 '^readonly VERSION=' fedora-setup.sh | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
+          echo "Version du script : $version"
+          bad=$(grep -L "<span data-version>v${version}</span>" docs/*.html || true)
+          if [ -n "$bad" ]; then
+            echo "::error::Version différente de v${version} dans : $bad"
+            exit 1
+          fi
+
+  smoke:
+    name: Simulation sur Fedora
+    runs-on: ubuntu-latest
+    needs: lint
+    # Image Fedora officielle : le script refuse de tourner ailleurs. Seul le
+    # mode simulation est exercé, aucune commande n'est exécutée.
+    container: registry.fedoraproject.org/fedora:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: --help et --version
+        run: |
+          ./fedora-setup.sh --help > /dev/null
+          ./fedora-setup.sh --version
+
+      - name: Flux principal simulé
+        run: ./fedora-setup.sh --dry-run --yes --quiet
+
+      - name: Options autonomes simulées
+        run: |
+          for opt in --clean --memory --boot --laptop --security --devtools --docker --install; do
+            echo "::group::$opt"
+            ./fedora-setup.sh "$opt" --dry-run --yes
+            echo "::endgroup::"
+          done

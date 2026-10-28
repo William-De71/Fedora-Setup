@@ -274,8 +274,9 @@ Options :
 Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
   --install       Copier le projet dans ${INSTALL_DIR} et créer
                   le lien ${BIN_DIR}/${CMD_NAME}
-                  (clone git si un remote « origin » est configuré,
-                  ce qui permet ensuite d'utiliser --update).
+                  (clone git de la dernière release vX.Y.Z si un remote
+                  « origin » est configuré, ce qui permet ensuite
+                  d'utiliser --update).
                   Régénère aussi les listes réelles (rpm.list,
                   flatpak.list, repos.list, gnome-extensions.list)
                   depuis les gabarits *.list.example du dépôt : c'est
@@ -420,8 +421,11 @@ checks() {
 
     ensure_lists_from_examples
 
-    # Connexion réseau indispensable (dépôts, téléchargements)
-    if ! ping -c 1 -W 3 fedoraproject.org &> /dev/null; then
+    # Connexion réseau indispensable (dépôts, téléchargements). Certains
+    # réseaux (entreprise, hôtel) filtrent l'ICMP : un ping sans réponse n'est
+    # pas une preuve d'absence de réseau, d'où le second essai en HTTPS.
+    if ! ping -c 1 -W 3 fedoraproject.org &> /dev/null \
+        && ! curl -fsS --max-time 5 -o /dev/null https://fedoraproject.org &> /dev/null; then
         error "Pas de connexion réseau. Vérifiez votre connexion et relancez."
         exit 1
     fi
@@ -499,8 +503,12 @@ setup_repos() {
     run "Activation dépôt fedora-cisco-openh264" \
         dnf config-manager setopt fedora-cisco-openh264.enabled=1
 
-    # Flathub : dépôt Flatpak principal
-    if ! flatpak remotes | grep -q flathub; then
+    # Flathub : dépôt Flatpak principal. Flatpak est livré avec Workstation,
+    # mais absent d'une installation minimale (Server, Everything, conteneur).
+    if ! has_cmd flatpak; then
+        run "Installation de Flatpak" dnf install -y flatpak
+    fi
+    if ! flatpak remotes 2>/dev/null | grep -q flathub; then
         run "Dépôt Flathub" \
             flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
     else
@@ -520,9 +528,14 @@ setup_repos() {
 install_repos() {
     section "Dépôts tiers ($(basename "$REPOS_LIST"))"
 
-    if [[ ! -f "$REPOS_LIST" ]]; then
+    local list_file
+    list_file="$(resolve_list "$REPOS_LIST")"
+    if [[ -z "$list_file" ]]; then
         info "Aucun fichier $REPOS_LIST : étape ignorée."
         return
+    fi
+    if [[ "$list_file" != "$REPOS_LIST" ]]; then
+        info "${C_BLUE}simulé${C_RESET} : lecture de $(basename "$list_file")"
     fi
 
     local line name gpgkey repourl repofile
@@ -557,7 +570,7 @@ install_repos() {
         else
             info "Dépôt « $name » ignoré."
         fi
-    done < "$REPOS_LIST"
+    done < "$list_file"
 }
 
 #===============================================================================
@@ -594,8 +607,20 @@ update_firmwares() {
 # Recense les contrôleurs graphiques présents (VGA, 3D, Display).
 # Sur un portable hybride (ex: ThinkPad P15s = Intel + NVIDIA), plusieurs
 # GPU sont détectés et chaque branche ci-dessous s'applique indépendamment.
+#
+# On filtre sur la classe PCI complète : un simple « 3d » correspondrait
+# aussi à une adresse de bus (ex. « 3d:00.0 » d'un SSD NVMe Intel) et
+# déclencherait à tort l'installation de pilotes graphiques.
 gpu_detect() {
-    GPU_INFO=$(lspci | grep -Ei "vga|3d|display")
+    # lspci (pciutils) manque sur une installation minimale
+    if ! has_cmd lspci; then
+        run "Installation de pciutils (lspci)" dnf install -y pciutils
+    fi
+    GPU_INFO=$(lspci 2>/dev/null | grep -E "VGA compatible controller|3D controller|Display controller")
+    if [[ -z "$GPU_INFO" ]]; then
+        info "Aucun contrôleur graphique détecté (machine virtuelle, conteneur ?)."
+        return 0
+    fi
     info "GPU détecté(s) :"
     while IFS= read -r line; do
         info "  - ${line#*: }"
@@ -687,6 +712,20 @@ setup_multimedia() {
 # TRAITEMENT DES LISTES DE PAQUETS
 #===============================================================================
 
+# Chemin de liste réellement lisible. En simulation, un fichier *.list peut
+# n'avoir été que « créé » symboliquement : on se rabat alors sur son
+# gabarit pour montrer malgré tout ce qui serait fait. Affiche le chemin
+# retenu, ou rien si aucun n'existe.
+#   $1 : chemin du fichier de liste
+resolve_list() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        echo "$file"
+    elif [[ $DRY_RUN -eq 1 && -f "${file}.example" ]]; then
+        echo "${file}.example"
+    fi
+}
+
 # Lit un fichier de liste et exécute install/remove pour chaque entrée.
 #   $1 : chemin du fichier
 #   $2 : type ("rpm" ou "flatpak")
@@ -694,17 +733,15 @@ process_list() {
     local file="$1" type="$2"
     local line action pkg
 
-    # En simulation, le fichier de liste peut n'avoir été que « créé »
-    # symboliquement : on se rabat alors sur le gabarit correspondant pour
-    # montrer malgré tout ce qui serait installé.
-    if [[ ! -f "$file" ]]; then
-        if [[ $DRY_RUN -eq 1 && -f "${file}.example" ]]; then
-            info "${C_BLUE}simulé${C_RESET} : lecture de $(basename "${file}.example")"
-            file="${file}.example"
-        else
-            info "Fichier introuvable : $file — étape ignorée."
-            return 0
-        fi
+    local resolved
+    resolved="$(resolve_list "$file")"
+    if [[ -z "$resolved" ]]; then
+        info "Fichier introuvable : $file — étape ignorée."
+        return 0
+    fi
+    if [[ "$resolved" != "$file" ]]; then
+        info "${C_BLUE}simulé${C_RESET} : lecture de $(basename "$resolved")"
+        file="$resolved"
     fi
 
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -772,19 +809,27 @@ gnome_user() {
 
 # Exécute une commande en tant que l'utilisateur GNOME cible, avec son bus
 # D-Bus de session (nécessaire pour que gext puisse parler à GNOME Shell).
+#
+# sudo remplace le PATH par secure_path (/usr/sbin:/usr/bin…), qui ne
+# contient pas ~/.local/bin où pipx installe gext : le PATH est donc
+# reconstruit explicitement via env, sans quoi gext reste introuvable.
 run_as_gnome_user() {
-    local user uid
+    local user uid home
     user="$(gnome_user)" || return 1
     uid="$(id -u "$user")"
-    sudo -u "$user" \
+    home="$(getent passwd "$user" | cut -d: -f6)"
+    sudo -u "$user" env \
+        HOME="$home" \
+        PATH="${home}/.local/bin:/usr/local/bin:/usr/bin:/bin" \
         DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${uid}/bus" \
         XDG_RUNTIME_DIR="/run/user/${uid}" \
         "$@"
 }
 
 # Vrai si la commande gext est disponible pour l'utilisateur cible
+# (« command » est une primitive du shell : sudo ne peut pas l'exécuter seule).
 gext_installed() {
-    run_as_gnome_user command -v gext &> /dev/null
+    run_as_gnome_user sh -c 'command -v gext' &> /dev/null
 }
 
 # Vrai si l'extension (UUID) est installée (activée ou non) pour l'utilisateur cible
@@ -828,8 +873,10 @@ process_gnome_extensions() {
         esac
 
         if [[ "$action" == "add" ]] && ! gnome_ext_installed "$uuid"; then
+            # --filesystem est une option globale de gext : elle doit précéder
+            # la sous-commande (« gext install --filesystem » est refusé).
             run "Installation extension GNOME $uuid" \
-                run_as_gnome_user gext install --filesystem "$uuid"
+                run_as_gnome_user gext --filesystem install "$uuid"
             run "Activation extension GNOME $uuid" \
                 run_as_gnome_user gext enable "$uuid"
         elif [[ "$action" == "del" ]] && gnome_ext_installed "$uuid"; then
@@ -842,18 +889,24 @@ process_gnome_extensions() {
 install_gnome_extensions() {
     section "Extensions GNOME Shell ($(basename "$GNOME_EXT_LIST"))"
 
-    if [[ ! -f "$GNOME_EXT_LIST" ]]; then
+    local list_file
+    list_file="$(resolve_list "$GNOME_EXT_LIST")"
+    if [[ -z "$list_file" ]]; then
         info "Aucun fichier $GNOME_EXT_LIST : étape ignorée."
         return
     fi
+    if [[ "$list_file" != "$GNOME_EXT_LIST" ]]; then
+        info "${C_BLUE}simulé${C_RESET} : lecture de $(basename "$list_file")"
+    fi
 
-    if ! gnome_user &> /dev/null; then
+    # stderr laissé visible : c'est l'erreur à laquelle renvoie le message.
+    if ! gnome_user > /dev/null; then
         info "Étape ignorée (voir erreur ci-dessus)."
         return
     fi
 
     setup_gnome_extensions_cli
-    process_gnome_extensions "$GNOME_EXT_LIST"
+    process_gnome_extensions "$list_file"
 }
 
 #===============================================================================
@@ -896,9 +949,10 @@ clean_journal() {
         journalctl --vacuum-size="$JOURNAL_MAX_SIZE"
 
     if [[ ! -f "$JOURNALD_CONF" ]]; then
-        install -d "$(dirname "$JOURNALD_CONF")"
+        # La création du dossier passe par run() : en simulation, rien ne
+        # doit être écrit sur le disque.
         run "Plafonnement permanent du journal (SystemMaxUse=${JOURNAL_MAX_SIZE})" \
-            bash -c "printf '[Journal]\nSystemMaxUse=%s\n' '$JOURNAL_MAX_SIZE' > '$JOURNALD_CONF'"
+            bash -c "install -d '$(dirname "$JOURNALD_CONF")' && printf '[Journal]\nSystemMaxUse=%s\n' '$JOURNAL_MAX_SIZE' > '$JOURNALD_CONF'"
     else
         info "Plafond du journal déjà configuré ($JOURNALD_CONF)"
     fi
@@ -1316,14 +1370,25 @@ cpu_is_intel() {
 # Installe TLP en neutralisant power-profiles-daemon, ou conserve PPD.
 # Les deux services pilotent les mêmes registres : les faire cohabiter
 # produit des réglages incohérents et des retours en arrière permanents.
+#
+# Depuis Fedora 41, le sélecteur de profil de GNOME est fourni par tuned-ppd
+# (tuned + une couche compatible power-profiles-daemon) et non plus par
+# power-profiles-daemon. Le paquet tlp déclare un conflit avec tuned : son
+# installation exige alors --allowerasing, qui retire tuned et tuned-ppd.
 laptop_power_manager() {
-    local ppd_installed=1 tlp_installed=1
-    pkg_installed power-profiles-daemon || ppd_installed=0
+    local ppd_pkg="" tlp_installed=1
+    if pkg_installed tuned-ppd; then
+        ppd_pkg="tuned-ppd"
+    elif pkg_installed power-profiles-daemon; then
+        ppd_pkg="power-profiles-daemon"
+    fi
     pkg_installed tlp || tlp_installed=0
 
     if [[ $tlp_installed -eq 1 ]]; then
         info "TLP est déjà installé"
-        if [[ $ppd_installed -eq 1 ]]; then
+        # tuned-ppd ne peut pas cohabiter avec TLP (conflit de paquets) :
+        # seul power-profiles-daemon peut subsister à côté.
+        if [[ "$ppd_pkg" == "power-profiles-daemon" ]]; then
             info "${C_YELLOW}power-profiles-daemon est également présent :${C_RESET}"
             info "${C_YELLOW}les deux se contredisent, il faut en neutraliser un.${C_RESET}"
             if ask_yes_no "Masquer power-profiles-daemon au profit de TLP ?"; then
@@ -1341,30 +1406,43 @@ laptop_power_manager() {
     info "  ${C_BOLD}TLP${C_RESET} — plus agressif sur l'autonomie, largement configurable,"
     info "     mais remplace le sélecteur de profil de GNOME."
 
-    if [[ $ppd_installed -eq 1 ]]; then
-        info "Actuellement : ${C_GREEN}power-profiles-daemon${C_RESET}"
+    if [[ -n "$ppd_pkg" ]]; then
+        info "Actuellement : ${C_GREEN}${ppd_pkg}${C_RESET}"
     else
         info "Actuellement : ${C_YELLOW}aucun gestionnaire installé${C_RESET}"
     fi
 
     if ! ask_yes_no "Installer TLP à la place ?"; then
-        if [[ $ppd_installed -eq 0 ]]; then
-            if ask_yes_no "Installer power-profiles-daemon ?"; then
-                run "Installation de power-profiles-daemon" \
-                    dnf install -y power-profiles-daemon
-                run "Activation de power-profiles-daemon" \
-                    systemctl enable --now power-profiles-daemon
+        if [[ -z "$ppd_pkg" ]]; then
+            # Paquet fourni par Fedora pour le sélecteur de profil de GNOME
+            local default_ppd="power-profiles-daemon"
+            local default_units=(power-profiles-daemon)
+            if [[ $(rpm -E %fedora) -ge 41 ]]; then
+                default_ppd="tuned-ppd"
+                default_units=(tuned tuned-ppd)
+            fi
+            if ask_yes_no "Installer ${default_ppd} ?"; then
+                run "Installation de ${default_ppd}" \
+                    dnf install -y "$default_ppd"
+                run "Activation de ${default_ppd}" \
+                    systemctl enable --now "${default_units[@]}"
             fi
         else
-            info "power-profiles-daemon conservé."
+            info "${ppd_pkg} conservé."
         fi
         return 0
     fi
 
     # tlp-rdw gère la radio (Wi-Fi/Bluetooth) selon la connexion filaire.
-    run "Installation de TLP" dnf install -y tlp tlp-rdw
+    if [[ "$ppd_pkg" == "tuned-ppd" ]]; then
+        info "${C_YELLOW}TLP est incompatible avec tuned : tuned et tuned-ppd seront retirés.${C_RESET}"
+        run "Installation de TLP (remplace tuned)" \
+            dnf install -y --allowerasing tlp tlp-rdw
+    else
+        run "Installation de TLP" dnf install -y tlp tlp-rdw
+    fi
 
-    if [[ $ppd_installed -eq 1 ]]; then
+    if [[ "$ppd_pkg" == "power-profiles-daemon" ]]; then
         run "Masquage de power-profiles-daemon (conflit avec TLP)" \
             systemctl mask --now power-profiles-daemon
     fi
@@ -1625,8 +1703,17 @@ security_auto_updates() {
                    -e 's/^download_updates\s*=.*/download_updates = yes/' \
                    -e 's/^apply_updates\s*=.*/apply_updates = no/' "$conf"
     else
-        info "${C_YELLOW}Fichier de configuration introuvable ($conf) :${C_RESET}"
-        info "${C_YELLOW}vérifiez que apply_updates reste à « no ».${C_RESET}"
+        # Avec dnf5, le fichier de /etc n'est pas livré par le paquet (simple
+        # surcharge facultative de /usr/share/dnf5/dnf5-plugins/automatic.conf) :
+        # on le crée avec les seules valeurs à imposer, le reste étant hérité.
+        run "Configuration : téléchargement sans installation (${conf})" \
+            bash -c "install -d '$(dirname "$conf")' && cat > '$conf' <<'AUTOMATIC'
+# Généré par fedora-setup --security
+[commands]
+upgrade_type = security
+download_updates = yes
+apply_updates = no
+AUTOMATIC"
     fi
 
     run "Activation du minuteur ${timer}" systemctl enable --now "$timer"
@@ -1656,8 +1743,10 @@ security_dns() {
         return 0
     fi
 
-    # Adresses privées (RFC 1918) : résolveur local, on n'y touche pas.
-    if [[ "$current" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.) ]]; then
+    # Adresses privées : résolveur local, on n'y touche pas. Outre la
+    # RFC 1918, on couvre la boucle locale, l'espace partagé 100.64.0.0/10
+    # (VPN de type Tailscale) et les adresses IPv6 locales (fc00::/7, fe80::).
+    if [[ "${current,,}" =~ ^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|127\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|f[cd][0-9a-f]{2}:|fe80:) ]]; then
         info "${C_YELLOW}Ce résolveur est local (adresse privée) : il résout${C_RESET}"
         info "${C_YELLOW}probablement des noms internes à votre réseau.${C_RESET}"
         info "${C_YELLOW}Le remplacer par un résolveur public casserait cet accès :${C_RESET}"
@@ -1676,11 +1765,10 @@ security_dns() {
     local conf_dir="/etc/systemd/resolved.conf.d"
     local conf="${conf_dir}/99-fedora-setup-dot.conf"
 
-    install -d "$conf_dir"
     # opportunistic plutôt que yes : en mode strict, un portail captif ou un
     # réseau bloquant le port 853 rend toute résolution impossible.
     run "Configuration de DNS-over-TLS" \
-        bash -c "cat > '$conf' <<'RESOLVED'
+        bash -c "install -d '$conf_dir' && cat > '$conf' <<'RESOLVED'
 # Généré par fedora-setup --security
 [Resolve]
 DNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net
@@ -1859,10 +1947,7 @@ install_devtools() {
 #===============================================================================
 
 install_bashrc() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'installation du bashrc nécessite les droits root : sudo ${CMD_NAME} --bashrc"
-        exit 1
-    fi
+    require_root_for "--bashrc" "installation de ~/.bashrc"
 
     local bashrc_example="${SCRIPT_DIR}/bashrc.example"
 
@@ -1876,15 +1961,15 @@ install_bashrc() {
     home_dir="$(getent passwd "$user" | cut -d: -f6)"
     dest="${home_dir}/.bashrc"
 
-    echo -e "${C_BOLD}Installation de ~/.bashrc pour ${user}${C_RESET}"
+    section "Installation de ~/.bashrc pour ${user}"
 
     if [[ -f "$dest" ]] && ! cmp -s "$bashrc_example" "$dest"; then
         run "Sauvegarde de l'ancien .bashrc (${dest}.bak)" \
             cp -p "$dest" "${dest}.bak"
     fi
 
-    install -m 644 -o "$user" -g "$user" "$bashrc_example" "$dest"
-    echo -e "    ${C_GREEN}Installé${C_RESET} : ${dest}"
+    run "Installation de ${dest}" \
+        install -m 644 -o "$user" -g "$user" "$bashrc_example" "$dest"
 }
 
 #===============================================================================
@@ -1968,28 +2053,15 @@ docker_verify() {
         run "Démarrage du service docker" systemctl start docker
     fi
 
-    if run "Test docker run hello-world" docker run --rm hello-world; then
-        info "${C_GREEN}Docker fonctionne correctement.${C_RESET}"
-    else
+    if ! run "Test docker run hello-world" docker run --rm hello-world; then
         error "Le test hello-world a échoué (voir $LOG_FILE)."
+    elif [[ $DRY_RUN -eq 0 ]]; then
+        info "${C_GREEN}Docker fonctionne correctement.${C_RESET}"
     fi
 }
 
 install_docker() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'installation de Docker nécessite les droits root : sudo ${CMD_NAME} --docker"
-        exit 1
-    fi
-
-    if [[ ! -e /etc/fedora-release ]]; then
-        error "Ce script est prévu pour Fedora uniquement."
-        exit 1
-    fi
-
-    touch "$LOG_FILE" || { error "Impossible de créer le log $LOG_FILE"; exit 1; }
-
-    echo -e "${C_BOLD}=== Fedora Setup v${VERSION} — installation de Docker ===${C_RESET}"
-    info "Journal  : ${C_YELLOW}tail -f $LOG_FILE${C_RESET}"
+    require_root_for "--docker" "installation de Docker"
 
     section "Docker CE"
     docker_setup_repo
@@ -2036,7 +2108,8 @@ create_snapshot() {
         return 0
     fi
 
-    local name="${SNAPSHOT_DIR}/root_$(date '+%Y%m%d-%H%M%S')"
+    local name
+    name="${SNAPSHOT_DIR}/root_$(date '+%Y%m%d-%H%M%S')"
 
     if [[ ! -d "$SNAPSHOT_DIR" ]]; then
         run "Création du dossier ${SNAPSHOT_DIR}" \
@@ -2106,6 +2179,14 @@ ask_reboot() {
         return
     fi
 
+    # Avec --yes, aucune question ne doit bloquer une exécution sans
+    # surveillance ; redémarrer d'office serait en revanche trop brutal.
+    if [[ $ASSUME_YES -eq 1 ]]; then
+        info "${C_YELLOW}Un redémarrage est recommandé : pensez à redémarrer.${C_RESET}"
+        return
+    fi
+
+    local answer
     echo -ne "${C_YELLOW}Un redémarrage est recommandé. Redémarrer maintenant ? [y/N] : ${C_RESET}"
     read -r answer
     if [[ "${answer,,}" == "y" ]]; then
@@ -2139,16 +2220,59 @@ ask_reboot() {
 #===============================================================================
 
 # Fichiers du projet installés tels quels (gabarits *.example + README)
-INSTALL_FILES=(rpm.list.example flatpak.list.example repos.list.example gnome-extensions.list.example bashrc.example README.md)
+INSTALL_FILES=(rpm.list.example flatpak.list.example repos.list.example gnome-extensions.list.example bashrc.example README.md LICENSE)
 readonly INSTALL_FILES
 
-install_command() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "L'installation nécessite les droits root : sudo ./${SCRIPT_NAME} --install"
-        exit 1
+# Lit la variable VERSION d'un exemplaire du script (vide s'il est absent).
+#   $1 : chemin du script
+script_version() {
+    grep -m1 '^readonly VERSION=' "$1" 2>/dev/null \
+        | sed -E 's/^readonly VERSION="(.*)"$/\1/'
+}
+
+# Place le clone de INSTALL_DIR sur la dernière release taggée (vX.Y.Z).
+# Seuls les tags au format de release.sh sont retenus : un tag de travail
+# (« test », « wip »…) ne doit jamais être déployé. --sort=-v:refname trie
+# par version sémantique décroissante (tri natif git, pas de parsing).
+# Sans aucun tag, le clone reste sur la branche par défaut.
+#   $1 : « pull » pour se rabattre sur git pull en l'absence de tag
+checkout_latest_release() {
+    local fallback="${1:-}" latest_tag current_tag
+
+    # En simulation, le clone n'existe pas encore : rien à interroger.
+    if [[ $DRY_RUN -eq 1 && ! -d "$INSTALL_DIR/.git" ]]; then
+        run "Passage à la dernière release" \
+            git -C "$INSTALL_DIR" checkout "<dernier tag vX.Y.Z>" --
+        return 0
     fi
 
-    echo -e "${C_BOLD}Installation de la commande « ${CMD_NAME} »${C_RESET}"
+    # safe.directory : en simulation sans sudo, le clone appartient à root et
+    # git refuserait de le lire (« propriétaire douteux »).
+    latest_tag="$(git -c safe.directory="$INSTALL_DIR" -C "$INSTALL_DIR" \
+        tag --list 'v[0-9]*' --sort=-v:refname 2>/dev/null | head -n1)"
+
+    if [[ -z "$latest_tag" ]]; then
+        if [[ "$fallback" == "pull" ]]; then
+            info "Aucun tag de release trouvé : mise à jour sur la branche par défaut (git pull)."
+            run "Récupération des mises à jour (git pull)" git -C "$INSTALL_DIR" pull --ff-only
+        else
+            info "Aucun tag de release : installation sur la branche par défaut."
+        fi
+        return 0
+    fi
+
+    current_tag="$(git -c safe.directory="$INSTALL_DIR" -C "$INSTALL_DIR" \
+        describe --tags --exact-match 2>/dev/null || true)"
+    if [[ "$current_tag" == "$latest_tag" ]]; then
+        info "Déjà sur la dernière release (${latest_tag})."
+    else
+        run "Passage à la release ${latest_tag}" git -C "$INSTALL_DIR" checkout -q "$latest_tag" --
+    fi
+}
+
+install_command() {
+    require_root_for "--install" "installation de la commande"
+    section "Installation de la commande « ${CMD_NAME} »"
 
     local origin_url
     origin_url="$(git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)"
@@ -2163,53 +2287,68 @@ install_command() {
     if [[ -n "$origin_url" && ! -d "$INSTALL_DIR/.git" ]]; then
         # Un remote existe et aucune installation git n'est déjà en place :
         # on clone pour pouvoir utiliser --update ensuite.
-        rm -rf "$INSTALL_DIR"
-        if ! run "Clonage du dépôt dans ${INSTALL_DIR}" git clone "$origin_url" "$INSTALL_DIR"; then
+        if [[ -e "$INSTALL_DIR" ]]; then
+            run "Suppression de l'ancienne installation par copie" rm -rf "$INSTALL_DIR"
+        fi
+        if ! run "Clonage du dépôt dans ${INSTALL_DIR}" git clone -q "$origin_url" "$INSTALL_DIR"; then
             error "Échec du clonage : installation annulée."
             exit 1
         fi
+        # Un clone se trouve sur la tête de branche, qui peut contenir du
+        # travail non publié : on installe la dernière release, comme --update.
+        checkout_latest_release
     elif [[ -n "$origin_url" && -d "$INSTALL_DIR/.git" ]]; then
         info "Installation git déjà en place dans ${INSTALL_DIR} (utilisez --update pour la synchroniser)."
+    elif [[ "$SCRIPT_DIR" == "$INSTALL_DIR" ]]; then
+        # Lancé depuis l'installation elle-même : copier un fichier sur
+        # lui-même échouerait, il n'y a rien à copier.
+        info "Script lancé depuis ${INSTALL_DIR} : aucune copie nécessaire."
     else
         # Pas de remote configuré : copie de fichiers classique, --update indisponible.
-        install -d "$INSTALL_DIR"
-        install -m 755 "${SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
+        run "Création de ${INSTALL_DIR}" install -d "$INSTALL_DIR"
+        run "Copie de ${SCRIPT_NAME}" \
+            install -m 755 "${SCRIPT_DIR}/${SCRIPT_NAME}" "${INSTALL_DIR}/${SCRIPT_NAME}"
+        local f
         for f in "${INSTALL_FILES[@]}"; do
             if [[ -f "${SCRIPT_DIR}/$f" ]]; then
-                install -m 644 "${SCRIPT_DIR}/$f" "${INSTALL_DIR}/$f"
+                run "Copie de ${f}" install -m 644 "${SCRIPT_DIR}/$f" "${INSTALL_DIR}/$f"
             fi
         done
         info "Aucun remote git « origin » configuré : installation par copie, --update indisponible."
     fi
 
     # Le script installé doit être exécutable même après un clone git
-    chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
+    run "Droits d'exécution" chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
 
     # Remise à zéro volontaire des listes réelles depuis les gabarits *.example
-    # (--install écrase toujours ; --update, lui, n'y touche jamais)
-    local f dest
-    for f in "${INSTALL_DIR}"/*.list.example; do
-        [[ -e "$f" ]] || continue
-        dest="${f%.example}"
-        install -m 644 "$f" "$dest"
+    # (--install écrase toujours ; --update, lui, n'y touche jamais). En
+    # simulation, INSTALL_DIR peut ne pas exister : on énumère alors les
+    # gabarits du dépôt source, qui sont les mêmes.
+    local src_dir="$INSTALL_DIR" example name
+    [[ $DRY_RUN -eq 1 && ! -d "$INSTALL_DIR" ]] && src_dir="$SCRIPT_DIR"
+    for example in "${src_dir}"/*.list.example; do
+        [[ -e "$example" ]] || continue
+        name="$(basename "$example")"
+        run "Régénération de ${name%.example}" \
+            install -m 644 "${INSTALL_DIR}/${name}" "${INSTALL_DIR}/${name%.example}"
     done
 
     # Lien symbolique dans le PATH -> commande accessible partout
-    ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
+    run "Lien ${BIN_DIR}/${CMD_NAME}" ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
 
-    echo -e "    Fichiers installés dans : ${C_BLUE}${INSTALL_DIR}${C_RESET}"
-    echo -e "    Commande disponible     : ${C_GREEN}${CMD_NAME}${C_RESET} (${BIN_DIR}/${CMD_NAME}), version ${VERSION}"
-    echo -e "    Listes à personnaliser  : ${INSTALL_DIR}/rpm.list , ${INSTALL_DIR}/flatpak.list , ${INSTALL_DIR}/gnome-extensions.list"
-    echo -e "    ${C_YELLOW}Note : --install régénère toujours ces listes depuis les *.list.example${C_RESET}"
-    echo -e "    ${C_YELLOW}(remise à zéro) ; --update, lui, ne les touche jamais.${C_RESET}"
-    echo -e "\n    Lancez maintenant : ${C_YELLOW}sudo ${CMD_NAME}${C_RESET}"
+    local installed_version
+    installed_version="$(script_version "${INSTALL_DIR}/${SCRIPT_NAME}")"
+
+    info "Fichiers installés dans : ${C_BLUE}${INSTALL_DIR}${C_RESET}"
+    info "Commande disponible     : ${C_GREEN}${CMD_NAME}${C_RESET} (${BIN_DIR}/${CMD_NAME}), version ${installed_version:-$VERSION}"
+    info "Listes à personnaliser  : ${INSTALL_DIR}/rpm.list , ${INSTALL_DIR}/flatpak.list , ${INSTALL_DIR}/gnome-extensions.list"
+    info "${C_YELLOW}Note : --install régénère toujours ces listes depuis les *.list.example${C_RESET}"
+    info "${C_YELLOW}(remise à zéro) ; --update, lui, ne les touche jamais.${C_RESET}"
+    info "Lancez maintenant : ${C_YELLOW}sudo ${CMD_NAME}${C_RESET}"
 }
 
 update_command() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "La mise à jour nécessite les droits root : sudo ${CMD_NAME} --update"
-        exit 1
-    fi
+    require_root_for "--update" "mise à jour de la commande"
 
     if [[ ! -d "$INSTALL_DIR/.git" ]]; then
         error "Installation non-git dans ${INSTALL_DIR} : impossible de mettre à jour."
@@ -2217,53 +2356,31 @@ update_command() {
         exit 1
     fi
 
-    echo -e "${C_BOLD}Mise à jour de la commande « ${CMD_NAME} »${C_RESET}"
+    section "Mise à jour de la commande « ${CMD_NAME} »"
 
-    local old_version
-    old_version="$(grep -m1 '^readonly VERSION=' "$INSTALL_DIR/${SCRIPT_NAME}" | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
+    local old_version new_version
+    old_version="$(script_version "$INSTALL_DIR/${SCRIPT_NAME}")"
 
-    run "Récupération des tags" git -C "$INSTALL_DIR" fetch --tags --force
+    run "Récupération des tags" git -C "$INSTALL_DIR" fetch -q --tags --force
 
     # --update suit toujours la dernière release taggée (vX.Y.Z), jamais un
-    # commit intermédiaire de la branche : --sort=-v:refname trie les tags
-    # par ordre de version sémantique décroissant (tri natif git, pas de parsing).
-    local latest_tag
-    latest_tag="$(git -C "$INSTALL_DIR" tag --sort=-v:refname | head -n1)"
+    # commit intermédiaire de la branche.
+    checkout_latest_release pull
 
-    if [[ -z "$latest_tag" ]]; then
-        info "Aucun tag de release trouvé : mise à jour sur la branche par défaut (git pull)."
-        run "Récupération des mises à jour (git pull)" git -C "$INSTALL_DIR" pull --ff-only
-    else
-        local current_tag
-        current_tag="$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || true)"
+    run "Droits d'exécution" chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
+    run "Lien ${BIN_DIR}/${CMD_NAME}" ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
 
-        if [[ "$current_tag" == "$latest_tag" ]]; then
-            info "Déjà à jour (${latest_tag})."
-        else
-            run "Passage à la release ${latest_tag}" git -C "$INSTALL_DIR" checkout "$latest_tag" --
-        fi
-    fi
-
-    chmod 755 "${INSTALL_DIR}/${SCRIPT_NAME}"
-    ln -sf "${INSTALL_DIR}/${SCRIPT_NAME}" "${BIN_DIR}/${CMD_NAME}"
-
-    local new_version
-    new_version="$(grep -m1 '^readonly VERSION=' "$INSTALL_DIR/${SCRIPT_NAME}" | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
-
-    echo -e "    Version : ${C_YELLOW}${old_version}${C_RESET} -> ${C_GREEN}${new_version}${C_RESET}"
+    new_version="$(script_version "$INSTALL_DIR/${SCRIPT_NAME}")"
+    info "Version : ${C_YELLOW}${old_version}${C_RESET} -> ${C_GREEN}${new_version}${C_RESET}"
 }
 
 uninstall_command() {
-    if [[ $(id -u) -ne 0 ]]; then
-        error "La désinstallation nécessite les droits root : sudo ${CMD_NAME} --uninstall"
-        exit 1
-    fi
+    require_root_for "--uninstall" "désinstallation de la commande"
+    section "Désinstallation de la commande « ${CMD_NAME} »"
 
-    echo -e "${C_BOLD}Désinstallation de la commande « ${CMD_NAME} »${C_RESET}"
-    rm -f "${BIN_DIR}/${CMD_NAME}"
-    rm -rf "$INSTALL_DIR"
-    echo -e "    ${C_GREEN}Commande et fichiers supprimés.${C_RESET}"
-    echo -e "    (Les journaux dans /var/log/fedora-setup_*.log sont conservés.)"
+    run "Suppression du lien ${BIN_DIR}/${CMD_NAME}" rm -f "${BIN_DIR}/${CMD_NAME}"
+    run "Suppression de ${INSTALL_DIR}" rm -rf "$INSTALL_DIR"
+    info "(Les journaux dans /var/log/fedora-setup_*.log sont conservés.)"
 }
 
 #===============================================================================
@@ -2272,6 +2389,12 @@ uninstall_command() {
 
 parse_args() {
     while [[ $# -gt 0 ]]; do
+        # Les options -r/-f/-d/-e attendent un fichier : sans lui, set -u
+        # interromprait le script sur un obscur « $2 : variable sans liaison ».
+        if [[ "$1" =~ ^-[rfde]$ && $# -lt 2 ]]; then
+            error "L'option $1 attend un nom de fichier."
+            exit 1
+        fi
         case "$1" in
             -r)            RPM_LIST="$(realpath "$2")"; shift 2 ;;
             -f)            FLATPAK_LIST="$(realpath "$2")"; shift 2 ;;
@@ -2288,15 +2411,15 @@ parse_args() {
             -n|--dry-run)  DRY_RUN=1; shift ;;
             --snapshot)    DO_SNAPSHOT=1; shift ;;
             -v|--version)  echo "$VERSION"; exit 0 ;;
-            --install)     install_command; exit 0 ;;
-            --update)      update_command; exit 0 ;;
-            --uninstall)   uninstall_command; exit 0 ;;
-            --bashrc)      install_bashrc; exit 0 ;;
-            --docker)      install_docker; exit 0 ;;
             # Ces actions sont mémorisées et non exécutées ici : le reste de
             # la ligne de commande doit d'abord être lu, faute de quoi un
             # « --clean --dry-run » lancerait le nettoyage pour de vrai,
             # DRY_RUN n'étant pas encore positionné.
+            --install)     ACTION="install_command"; shift ;;
+            --update)      ACTION="update_command"; shift ;;
+            --uninstall)   ACTION="uninstall_command"; shift ;;
+            --bashrc)      ACTION="install_bashrc"; shift ;;
+            --docker)      ACTION="install_docker"; shift ;;
             --clean)       ACTION="clean_system"; shift ;;
             --memory)      ACTION="optimize_memory"; shift ;;
             --boot)        ACTION="optimize_boot"; shift ;;

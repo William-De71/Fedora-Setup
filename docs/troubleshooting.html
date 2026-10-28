@@ -111,7 +111,7 @@
                 </tr>
                 <tr>
                     <td>TLP au profit de PPD (<code>--laptop</code>)</td>
-                    <td><code>sudo systemctl unmask power-profiles-daemon</code> puis désactiver TLP</td>
+                    <td><code>sudo systemctl unmask power-profiles-daemon</code> puis désactiver TLP (Fedora 41+ : <code>sudo dnf install --allowerasing tuned-ppd</code>, qui retire TLP)</td>
                 </tr>
                 <tr>
                     <td>DNS chiffré (<code>--security</code>)</td>
@@ -151,10 +151,11 @@
             <div class="opt-head"><h3>Pas de connexion réseau</h3></div>
             <p>
                 Le script vérifie qu'il peut joindre <code>fedoraproject.org</code>
-                avant de commencer, puisque presque tout passe par le réseau. Si
-                votre réseau bloque les requêtes <code>ping</code> alors que la
-                connexion fonctionne, c'est un faux positif — vérifiez avec
-                <code>curl -I https://fedoraproject.org</code>.
+                avant de commencer, puisque presque tout passe par le réseau :
+                d'abord par <code>ping</code>, puis en HTTPS si l'ICMP est filtré
+                (réseau d'entreprise, hôtel). Si l'erreur persiste, vérifiez avec
+                <code>curl -I https://fedoraproject.org</code> — un proxy non
+                configuré pour root est une cause fréquente.
             </p>
         </div>
 

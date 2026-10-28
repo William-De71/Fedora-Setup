@@ -1,0 +1,6 @@
+# Contenu exclu de l'archive des releases (git archive) : outillage de
+# maintenance, inutile pour qui installe le script.
+.github/**          export-ignore
+.gitattributes      export-ignore
+tools/**            export-ignore
+release.sh          export-ignore

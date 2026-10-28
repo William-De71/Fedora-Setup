@@ -519,3 +519,15 @@ footer {
     :root { --t-2xl: 1.875rem; --t-xl: 1.5rem; }
     .content { padding: 1.5rem 1.1rem 3rem; }
 }
+
+/* Captures d'écran générées par tools/screenshots.py */
+.shot {
+    margin: 1.25rem 0;
+}
+.shot img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 10px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, .18);
+}

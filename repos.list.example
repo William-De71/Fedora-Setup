@@ -22,7 +22,7 @@
 vivaldi | https://repo.vivaldi.com/archive/linux_signing_key.pub | https://repo.vivaldi.com/archive/vivaldi-fedora.repo
 
 # VS Code (Microsoft)          -> paquet : code
-# (déjà présent en Flatpak com.visualstudio.code : choisir l'un OU l'autre)
+# (existe aussi en Flatpak com.visualstudio.code : choisir l'un OU l'autre)
 vscode | https://packages.microsoft.com/keys/microsoft.asc | https://packages.microsoft.com/yumrepos/vscode/config.repo
 
 # Sublime Text / Merge         -> paquets : sublime-text , sublime-merge

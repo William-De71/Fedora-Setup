@@ -9,15 +9,74 @@ permissions:
   contents: write
 
 jobs:
+  # Mêmes vérifications que pour un push : une release ne part jamais d'un
+  # commit qui ne passerait pas la CI.
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   release:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # historique complet : notes depuis le tag précédent
 
-      - name: Create GitHub Release
+      # Le tag est créé par release.sh à partir de VERSION : un tag posé à la
+      # main sur un autre commit publierait un script annonçant une autre
+      # version que celle de la release.
+      - name: Concordance tag / VERSION
+        id: meta
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          version="$(grep -m1 '^readonly VERSION=' fedora-setup.sh | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
+          if [ "$tag" != "v${version}" ]; then
+            echo "::error::Le tag ${tag} ne correspond pas à VERSION=${version} dans fedora-setup.sh"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Fichiers de la release
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          mkdir dist
+          # Archive du dépôt tel que tagué (les fichiers exclus par
+          # .gitattributes export-ignore n'y figurent pas)
+          git archive --format=tar.gz --prefix="fedora-setup-${version}/" \
+            -o "dist/fedora-setup-${version}.tar.gz" "${GITHUB_REF_NAME}"
+          cp fedora-setup.sh dist/
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: Notes de version
+        run: |
+          version="${{ steps.meta.outputs.version }}"
+          repo="${GITHUB_REPOSITORY}"
+          cat > notes.md << EOF
+          ## Installation
+
+          \`\`\`bash
+          git clone https://github.com/${repo}.git
+          cd Fedora-Setup
+          ./fedora-setup.sh --dry-run     # simulation, sans sudo
+          sudo ./fedora-setup.sh --install
+          \`\`\`
+
+          Déjà installé : \`sudo fedora-setup --update\`.
+
+          Vérifier l'archive : \`sha256sum -c SHA256SUMS --ignore-missing\`
+
+          📖 [Documentation](https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/)
+          EOF
+
+      - name: Publication de la release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --generate-notes
+          # Les notes fournies sont placées avant celles générées par GitHub
+          # (liste des pull requests et contributeurs depuis le tag précédent).
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "Fedora Setup ${GITHUB_REF_NAME}" \
+            --notes-file notes.md \
+            --generate-notes \
+            --verify-tag

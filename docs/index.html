@@ -52,7 +52,7 @@
         <div class="meta">
             <span>Bash</span>
             <span>Licence MIT</span>
-            <span>Fedora 40+</span>
+            <span>Fedora 41+</span>
         </div>
     </div>
 
@@ -175,14 +175,13 @@
 
     <p>
         La simulation affiche chaque commande précédée de <code>$</code>, puis un
-        récapitulatif :
+        récapitulatif. Ci-dessous, la sortie réelle sur un portable hybride
+        Intel + NVIDIA :
     </p>
 
-<pre><code>    Suppression des paquets orphelins : <span class="sim">simulé</span>
-        <span class="prompt">$</span> dnf autoremove -y
-
-==&gt; Récapitulatif
-    Mode simulation : 7 commande(s) affichée(s), aucune exécutée.</code></pre>
+    <figure class="shot">
+        <img src="img/dry-run.svg" alt="Sortie de fedora-setup --dry-run : détection des GPU Intel et NVIDIA, commandes simulées et récapitulatif" loading="lazy">
+    </figure>
 
     <div class="note">
         <div class="note-label">Avant une grosse mise à jour</div>
@@ -212,8 +211,9 @@
     <p>
         Si le dépôt source a un remote <code>origin</code>, <code>--install</code>
         clone plutôt que copier, ce qui rend <code>--update</code> disponible.
-        Cette dernière suit toujours la <strong>dernière release taggée</strong>,
-        jamais un commit intermédiaire.
+        L'installation comme la mise à jour se placent toujours sur la
+        <strong>dernière release taggée</strong>, jamais sur un commit
+        intermédiaire.
     </p>
 
     <div class="note warn">
