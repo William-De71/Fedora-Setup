@@ -94,6 +94,10 @@ DO_SNAPSHOT=0      # Instantané Btrfs avant modification (--snapshot)
 # normal de post-installation.
 ACTION=""
 
+# Mis à 1 par une action autonome après laquelle un redémarrage peut être
+# nécessaire (--update-system) : main() propose alors de redémarrer.
+OFFER_REBOOT=0
+
 # Compteurs alimentés par run(), utilisés par le récapitulatif final.
 COUNT_OK=0
 COUNT_FAIL=0
@@ -295,6 +299,14 @@ Installation système (rend la commande « ${CMD_NAME} » appelable partout) :
                   (moteur, CLI, containerd, plugins buildx et compose),
                   ajouter \$SUDO_USER au groupe docker et valider avec
                   l'image hello-world. N'est jamais exécuté automatiquement.
+
+Mise à jour courante :
+  --update-system Mettre à jour le système et rien d'autre : paquets RPM,
+                  Flatpaks et firmwares (sauf avec --no-firmware), puis
+                  redémarrage proposé si nécessaire. Ne reconfigure ni les
+                  dépôts, ni les pilotes, ni les listes, et ne change pas
+                  de version de Fedora (voir --upgrade). À ne pas confondre
+                  avec --update, qui met à jour le script lui-même.
 
 Nettoyage & maintenance :
   --clean         Récupérer de l'espace disque : paquets orphelins, cache
@@ -608,6 +620,20 @@ update_firmwares() {
     else
         info "Aucune mise à jour firmware disponible"
     fi
+}
+
+# Mise à jour seule (--update-system) : le flux principal reconfigure aussi
+# les dépôts, les pilotes et les listes, ce qui est superflu pour la mise à
+# jour courante. Ne change jamais de version de Fedora (voir --upgrade).
+update_only() {
+    require_root_for "--update-system" "mise à jour du système"
+
+    [[ $DO_SNAPSHOT -eq 1 ]] && { section "Instantané Btrfs"; create_snapshot; }
+
+    update_system
+    [[ $DO_FIRMWARE -eq 1 ]] && update_firmwares
+
+    OFFER_REBOOT=1
 }
 
 #===============================================================================
@@ -2641,6 +2667,7 @@ parse_args() {
             --security)    ACTION="secure_system"; shift ;;
             --devtools)    ACTION="install_devtools"; shift ;;
             --upgrade)     ACTION="upgrade_fedora"; shift ;;
+            --update-system) ACTION="update_only"; shift ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac
@@ -2663,6 +2690,7 @@ main() {
     if [[ -n "$ACTION" ]]; then
         "$ACTION"
         summary
+        [[ $OFFER_REBOOT -eq 1 && $DRY_RUN -eq 0 ]] && ask_reboot
         [[ $COUNT_FAIL -eq 0 ]]
         return
     fi
