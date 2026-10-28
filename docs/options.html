@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Référence des options — Fedora Setup</title>
-<meta name="description" content="Les 28 options de fedora-setup : ce que fait chacune, ce qu'elle modifie et comment revenir en arrière.">
+<meta name="description" content="Les 29 options de fedora-setup : ce que fait chacune, ce qu'elle modifie et comment revenir en arrière.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -26,6 +26,7 @@
 
     <div class="nav-group">
         <div class="nav-title">Options autonomes</div>
+        <a href="#update-system"><code>--update-system</code></a>
         <a href="#clean"><code>--clean</code></a>
         <a href="#memory"><code>--memory</code></a>
         <a href="#boot"><code>--boot</code></a>
@@ -78,6 +79,7 @@
                 <tr><td><code>-q</code>, <code>--quiet</code></td><td>Affichage compact, détails dans le journal</td></tr>
                 <tr><td><code>-n</code>, <code>--dry-run</code></td><td>Simulation, sans <code>sudo</code> requis</td></tr>
                 <tr><td><code>--snapshot</code></td><td>Instantané Btrfs avant modification</td></tr>
+                <tr><td><code>--update-system</code></td><td>Mises à jour seules (RPM, Flatpak, firmware)</td></tr>
                 <tr><td><code>--clean</code></td><td>Nettoyage et maintenance</td></tr>
                 <tr><td><code>--memory</code></td><td>Réglages mémoire pour zram</td></tr>
                 <tr><td><code>--boot</code></td><td>Optimisation du démarrage</td></tr>
@@ -153,6 +155,36 @@
         Chacune fait son travail puis s'arrête, sans lancer le flux de
         post-installation. Aucune ne s'exécute d'elle-même.
     </p>
+
+    <div class="opt" id="update-system">
+        <div class="opt-head">
+            <h3>--update-system</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            La <strong>mise à jour courante</strong>, sans le reste du flux
+            principal : paquets RPM (<code>dnf upgrade --refresh</code>),
+            Flatpaks et firmwares, puis redémarrage proposé si un paquet le
+            réclame (noyau, glibc, systemd…).
+        </p>
+<pre><code><span class="prompt">$</span> sudo fedora-setup --update-system
+<span class="prompt">$</span> sudo fedora-setup --update-system --no-firmware   <span class="cmt"># sans fwupd</span>
+<span class="prompt">$</span> sudo fedora-setup --update-system --snapshot      <span class="cmt"># instantané avant</span></code></pre>
+        <p>
+            Ne reconfigure ni les dépôts, ni les pilotes, ni les listes, et ne
+            change jamais de version de Fedora : c'est le rôle de
+            <a href="#upgrade"><code>--upgrade</code></a>. Avec
+            <code>--yes</code>, le redémarrage est seulement signalé.
+        </p>
+        <div class="note safe">
+            <div class="note-label">À ne pas confondre avec --update</div>
+            <p>
+                <code>--update</code> met à jour le script <code>fedora-setup</code>
+                lui-même ; <code>--update-system</code> met à jour Fedora.
+            </p>
+        </div>
+    </div>
 
     <div class="opt" id="clean">
         <div class="opt-head">

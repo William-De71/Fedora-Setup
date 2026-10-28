@@ -71,6 +71,7 @@ implicitement : un `sudo fedora-setup` classique n'en déclenche aucune.
 
 | Option | Rôle |
 |---|---|
+| 🔄 [`--update-system`](https://william-de71.github.io/Fedora-Setup/options.html#update-system) | Mises à jour seules : RPM, Flatpak, firmwares, puis redémarrage proposé |
 | 🧹 [`--clean`](https://william-de71.github.io/Fedora-Setup/options.html#clean) | Cache DNF, journal systemd, vieux noyaux, runtimes Flatpak, TRIM |
 | 🧠 [`--memory`](https://william-de71.github.io/Fedora-Setup/options.html#memory) | Adapte les réglages du noyau au swap zram |
 | ⏱️ [`--boot`](https://william-de71.github.io/Fedora-Setup/options.html#boot) | Mesure le démarrage et propose d'en retirer le superflu |
@@ -87,7 +88,7 @@ Deux options transverses s'appliquent au flux principal :
 [`--snapshot`](https://william-de71.github.io/Fedora-Setup/options.html#snapshot)
 (instantané Btrfs avant modification). La
 [référence complète](https://william-de71.github.io/Fedora-Setup/options.html)
-détaille les 28 options, ce que chacune écrit sur le disque et comment revenir
+détaille les 29 options, ce que chacune écrit sur le disque et comment revenir
 en arrière.
 
 <table>

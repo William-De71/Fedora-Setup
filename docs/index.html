@@ -113,11 +113,16 @@
     </div>
 
     <p>
-        À côté de ce flux, <strong>neuf options autonomes</strong> ne s'exécutent
+        À côté de ce flux, <strong>dix options autonomes</strong> ne s'exécutent
         jamais d'elles-mêmes : elles font leur travail puis s'arrêtent.
     </p>
 
     <div class="cards">
+        <a class="card" href="options.html#update-system">
+            <span class="cmd">--update-system</span>
+            <h3>Mise à jour</h3>
+            <p>RPM, Flatpak et firmwares, sans reconfigurer le reste.</p>
+        </a>
         <a class="card" href="options.html#clean">
             <span class="cmd">--clean</span>
             <h3>Nettoyage</h3>
@@ -295,7 +300,7 @@ paquet         <span class="cmt"># équivalent à add:</span>
         <div class="note">
             <div class="note-label">Rien d'implicite</div>
             <p>
-                Les neuf options autonomes ne s'exécutent que si on les nomme. Un
+                Les dix options autonomes ne s'exécutent que si on les nomme. Un
                 <code>sudo fedora-setup</code> classique n'installe jamais Docker,
                 ne touche pas à votre <code>.bashrc</code> et ne désactive aucun
                 service.
