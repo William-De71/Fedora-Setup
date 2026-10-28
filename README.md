@@ -78,6 +78,7 @@ implicitement : un `sudo fedora-setup` classique n'en déclenche aucune.
 | 🛡️ [`--security`](https://william-de71.github.io/Fedora-Setup/options.html#security) | SELinux, pare-feu, mises à jour de sécurité auto, DNS chiffré |
 | 🛠️ [`--devtools`](https://william-de71.github.io/Fedora-Setup/options.html#devtools) | distrobox, virtualisation KVM, polices libres |
 | 🐳 [`--docker`](https://william-de71.github.io/Fedora-Setup/options.html#docker) | Docker CE depuis le dépôt officiel |
+| ⬆️ [`--upgrade`](https://william-de71.github.io/Fedora-Setup/options.html#upgrade) | Passe à la version suivante de Fedora dès sa sortie en stable |
 | 💻 [`--bashrc`](https://william-de71.github.io/Fedora-Setup/options.html#bashrc) | Installe un `~/.bashrc` personnalisé |
 
 Deux options transverses s'appliquent au flux principal :
@@ -86,7 +87,7 @@ Deux options transverses s'appliquent au flux principal :
 [`--snapshot`](https://william-de71.github.io/Fedora-Setup/options.html#snapshot)
 (instantané Btrfs avant modification). La
 [référence complète](https://william-de71.github.io/Fedora-Setup/options.html)
-détaille les 27 options, ce que chacune écrit sur le disque et comment revenir
+détaille les 28 options, ce que chacune écrit sur le disque et comment revenir
 en arrière.
 
 <table>

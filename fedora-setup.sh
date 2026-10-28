@@ -347,6 +347,16 @@ Outils de développement :
                   Fira Code, JetBrains Mono).
                   N'est jamais exécuté automatiquement.
 
+Montée de version :
+  --upgrade       Passer à la version suivante de Fedora (N -> N+1) dès
+                  qu'elle est publiée en stable (jamais une bêta), selon la
+                  procédure officielle dnf system-upgrade : mise à jour
+                  complète du système, instantané Btrfs proposé,
+                  téléchargement, puis installation au redémarrage
+                  (demandé, jamais imposé). Signale les dépôts tiers, le
+                  pilote NVIDIA et le fonctionnement sur batterie avant de
+                  commencer. N'est jamais exécuté automatiquement.
+
 Listes réelles vs gabarits :
   Le dépôt ne fournit que des gabarits *.list.example (rpm.list.example,
   flatpak.list.example, repos.list.example, gnome-extensions.list.example).
@@ -2075,6 +2085,210 @@ install_docker() {
 }
 
 #===============================================================================
+# MONTÉE DE VERSION FEDORA (--upgrade)
+#
+# Suit la procédure officielle « dnf system-upgrade » : mise à jour complète
+# de la version courante, téléchargement des paquets de la version suivante,
+# puis installation hors ligne au redémarrage. On ne monte que d'une version
+# à la fois (N -> N+1) : Fedora tolère un saut de deux versions, mais c'est
+# le chemin le plus testé, et le seul où les dépôts tiers ont eu le temps de
+# suivre.
+#
+# La version cible n'est proposée qu'une fois publiée en stable : une bêta
+# (« 45 Beta » dans releases.json) n'est jamais retenue.
+#===============================================================================
+
+readonly FEDORA_RELEASES_URL="https://fedoraproject.org/releases.json"
+
+# Dépôts maintenus par Fedora et RPM Fusion : prêts le jour de la sortie.
+# Tous les autres sont des dépôts tiers, souvent en retard de quelques jours.
+readonly UPGRADE_CORE_REPOS_RE='^(fedora|updates|rpmfusion-)'
+
+# Numéro de la plus récente version stable de Fedora (vide si inconnu).
+# Les entrées bêta (« 45 Beta ») sont écartées par l'expression régulière.
+latest_fedora_release() {
+    curl -fsS --max-time 10 "$FEDORA_RELEASES_URL" 2>/dev/null \
+        | grep -oE '"version": ?"[0-9]+"' | grep -oE '[0-9]+' | sort -n | tail -n1
+}
+
+# Identifiants des dépôts tiers activés, un par ligne.
+upgrade_third_party_repos() {
+    dnf repolist --enabled 2>/dev/null | awk 'NR > 1 { print $1 }' \
+        | grep -Ev "$UPGRADE_CORE_REPOS_RE" || true
+}
+
+# Vrai si la machine fonctionne sur batterie (aucun secteur branché).
+on_battery() {
+    local ps
+    has_battery || return 1
+    for ps in /sys/class/power_supply/*; do
+        if [[ "$(cat "$ps/type" 2>/dev/null)" == "Mains" \
+            && "$(cat "$ps/online" 2>/dev/null)" == "1" ]]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Constate tout ce qui peut faire échouer ou ralentir la montée de version,
+# avant d'y toucher. Renvoie 1 si l'utilisateur préfère s'arrêter.
+upgrade_preflight() {
+    local repos
+    repos="$(upgrade_third_party_repos)"
+    if [[ -n "$repos" ]]; then
+        info "Dépôts tiers activés (peuvent ne pas encore publier pour la"
+        info "nouvelle version ; le script proposera de les ignorer si besoin) :"
+        local r
+        while IFS= read -r r; do
+            info "  - ${r}"
+        done <<< "$repos"
+    fi
+
+    if pkg_installed akmod-nvidia; then
+        info "${C_YELLOW}Pilote NVIDIA : le module est recompilé au premier démarrage.${C_RESET}"
+        info "${C_YELLOW}Si l'écran reste noir ou en basse résolution, patientez${C_RESET}"
+        info "${C_YELLOW}quelques minutes puis redémarrez.${C_RESET}"
+    fi
+
+    if has_cmd gnome-shell; then
+        info "Extensions GNOME : celles qui ne déclarent pas encore la nouvelle"
+        info "version de GNOME Shell seront désactivées jusqu'à leur mise à jour."
+    fi
+
+    if on_battery; then
+        info "${C_YELLOW}La machine est sur batterie. L'installation dure souvent${C_RESET}"
+        info "${C_YELLOW}plus de 30 minutes : une coupure en plein milieu peut${C_RESET}"
+        info "${C_YELLOW}laisser le système inutilisable. Branchez le secteur.${C_RESET}"
+        if ! ask_yes_no "Continuer quand même sur batterie ?"; then
+            return 1
+        fi
+    fi
+    return 0
+}
+
+# Télécharge les paquets de la version cible. En cas d'échec, propose une
+# seconde tentative en ignorant les dépôts tiers, puis en autorisant la
+# suppression des paquets bloquants — jamais d'office avec --yes : retirer
+# des paquets sans que personne ne lise la liste serait trop brutal.
+#   $1 : version cible
+upgrade_download() {
+    local target="$1"
+    local -a extra=()
+
+    if run "Téléchargement des paquets de Fedora ${target}" \
+        dnf system-upgrade download -y --releasever="$target"; then
+        return 0
+    fi
+
+    if [[ $ASSUME_YES -eq 1 ]]; then
+        error "Téléchargement impossible : consultez ${LOG_FILE}"
+        error "puis relancez sans --yes pour choisir comment contourner le blocage."
+        return 1
+    fi
+
+    info "${C_YELLOW}Le téléchargement a échoué. Causes habituelles : un dépôt tiers${C_RESET}"
+    info "${C_YELLOW}qui ne publie pas encore pour Fedora ${target}, ou un paquet sans${C_RESET}"
+    info "${C_YELLOW}équivalent dans la nouvelle version (détail dans le journal).${C_RESET}"
+
+    local repos r
+    repos="$(upgrade_third_party_repos)"
+    if [[ -n "$repos" ]] \
+        && ask_yes_no "Réessayer en ignorant les dépôts tiers (le temps du téléchargement seulement) ?"; then
+        while IFS= read -r r; do
+            extra+=("--disablerepo=${r}")
+        done <<< "$repos"
+    fi
+    if ask_yes_no "Autoriser la suppression des paquets qui bloquent la mise à niveau (--allowerasing) ?"; then
+        extra+=(--allowerasing)
+    fi
+    if [[ ${#extra[@]} -eq 0 ]]; then
+        return 1
+    fi
+
+    run "Nouvelle tentative de téléchargement" \
+        dnf system-upgrade download -y --releasever="$target" "${extra[@]}"
+}
+
+upgrade_fedora() {
+    require_root_for "--upgrade" "montée de version Fedora"
+
+    section "Version disponible"
+    local current latest target
+    current="$(rpm -E %fedora)"
+    latest="$(latest_fedora_release)"
+
+    if [[ -z "$latest" ]]; then
+        error "Impossible de déterminer la dernière version de Fedora"
+        error "(${FEDORA_RELEASES_URL} injoignable ?). Vérifiez la connexion."
+        exit 1
+    fi
+
+    info "Version installée       : ${C_BOLD}Fedora ${current}${C_RESET}"
+    info "Dernière version stable : ${C_BOLD}Fedora ${latest}${C_RESET}"
+
+    if [[ "$latest" -le "$current" ]]; then
+        info "${C_GREEN}Le système est déjà sur la dernière version stable.${C_RESET}"
+        return 0
+    fi
+
+    target=$((current + 1))
+    if [[ "$latest" -gt "$target" ]]; then
+        info "Montée d'une version à la fois : Fedora ${target} d'abord, puis"
+        info "relancez ${C_YELLOW}sudo ${CMD_NAME} --upgrade${C_RESET} pour atteindre Fedora ${latest}."
+    fi
+
+    section "Avant de commencer"
+    upgrade_preflight || { info "Montée de version annulée."; return 0; }
+
+    if ! ask_yes_no "Passer de Fedora ${current} à Fedora ${target} ?"; then
+        info "Montée de version annulée."
+        return 0
+    fi
+
+    # La procédure officielle exige un système à jour : des paquets en retard
+    # sont la première cause de conflits de dépendances au téléchargement.
+    section "Mise à jour de Fedora ${current}"
+    if ! run "Mise à jour des paquets RPM" dnf upgrade -y --refresh; then
+        error "Mise à jour incomplète : montée de version interrompue."
+        return 1
+    fi
+
+    # Instantané pris après la mise à jour : c'est l'état « connu bon » le plus
+    # récent auquel revenir si la nouvelle version pose problème.
+    if root_is_btrfs; then
+        section "Instantané Btrfs"
+        if [[ $DO_SNAPSHOT -eq 1 ]] || ask_yes_no "Créer un instantané de / avant la montée de version ?"; then
+            create_snapshot
+        fi
+    fi
+
+    section "Téléchargement de Fedora ${target}"
+    if ! upgrade_download "$target"; then
+        error "Montée de version interrompue : le système reste en Fedora ${current}."
+        return 1
+    fi
+
+    section "Installation"
+    info "L'installation a lieu au redémarrage, hors session graphique."
+    info "${C_YELLOW}Ne coupez pas la machine pendant l'opération.${C_RESET}"
+    info "Ensuite : ${C_YELLOW}sudo ${CMD_NAME}${C_RESET} (pilotes, codecs, listes) puis"
+    info "${C_YELLOW}sudo ${CMD_NAME} --clean${C_RESET} pour retirer l'ancien noyau et le cache."
+
+    # Comme ask_reboot : --yes ne doit pas redémarrer la machine d'office.
+    if [[ $ASSUME_YES -eq 1 ]]; then
+        info "Pour lancer l'installation : ${C_YELLOW}sudo dnf offline reboot${C_RESET}"
+        return 0
+    fi
+    if ask_yes_no "Redémarrer maintenant pour installer Fedora ${target} ?"; then
+        log "Redémarrage pour la montée de version vers Fedora ${target}"
+        run "Redémarrage et installation de Fedora ${target}" dnf offline reboot -y
+    else
+        info "Les paquets restent prêts. Pour lancer l'installation plus tard :"
+        info "  ${C_YELLOW}sudo dnf offline reboot${C_RESET}"
+    fi
+}
+
+#===============================================================================
 # INSTANTANÉ BTRFS (--snapshot)
 #
 # Sur un système de fichiers Btrfs, un instantané se crée en une fraction de
@@ -2426,6 +2640,7 @@ parse_args() {
             --laptop)      ACTION="optimize_laptop"; shift ;;
             --security)    ACTION="secure_system"; shift ;;
             --devtools)    ACTION="install_devtools"; shift ;;
+            --upgrade)     ACTION="upgrade_fedora"; shift ;;
             -h|--help)     usage; exit 0 ;;
             *)             error "Option inconnue : $1"; usage; exit 1 ;;
         esac
