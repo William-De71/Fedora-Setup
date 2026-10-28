@@ -8,9 +8,9 @@
 <circle cx="60" cy="17" r="6" fill="#28c840"/>
 <text x="296" y="21" fill="#7f849c" text-anchor="middle">fedora-setup --security</text>
 <text x="18" y="65" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">$ </tspan><tspan fill="#d6dbf5" class="b">fedora-setup --security --dry-run --yes</tspan></text>
-<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.3.0 — sécurité &amp; réseau ===</tspan></text>
+<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.4.0 — sécurité &amp; réseau ===</tspan></text>
 <text x="18" y="122" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb">Mode simulation : aucune modification ne sera appliquée.</tspan></text>
-<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal  : </tspan><tspan fill="#f9e2af">tail -f /tmp/fedora-setup_20261028-143344.log</tspan></text>
+<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal  : </tspan><tspan fill="#f9e2af">tail -f /tmp/fedora-setup_20261028-145857.log</tspan></text>
 <text x="18" y="179" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; SELinux</tspan></text>
 <text x="18" y="198" fill="#d6dbf5" xml:space="preserve"><tspan>    SELinux : </tspan><tspan fill="#a6e3a1">Enforcing</tspan><tspan> (protection active)</tspan></text>
 <text x="18" y="236" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Pare-feu</tspan></text>
