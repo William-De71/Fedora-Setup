@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="593" height="555" viewBox="0 0 593 555" role="img" aria-label="fedora-setup — simulation">
+<title>fedora-setup — simulation</title>
+<style>text{font-family:'JetBrains Mono','Fira Code',ui-monospace,SFMono-Regular,Menlo,Consolas,'DejaVu Sans Mono',monospace;font-size:13px;white-space:pre}.b{font-weight:700}</style>
+<rect width="593" height="555" rx="10" fill="#1e2030"/>
+<path d="M0 10a10 10 0 0 1 10-10h573a10 10 0 0 1 10 10v24H0z" fill="#2a2d42"/>
+<circle cx="20" cy="17" r="6" fill="#ff5f57"/>
+<circle cx="40" cy="17" r="6" fill="#febc2e"/>
+<circle cx="60" cy="17" r="6" fill="#28c840"/>
+<text x="296" y="21" fill="#7f849c" text-anchor="middle">fedora-setup — simulation</text>
+<text x="18" y="65" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">$ </tspan><tspan fill="#d6dbf5" class="b">fedora-setup --dry-run --yes</tspan></text>
+<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.3.0 — post-installation &amp; maintenance ===</tspan></text>
+<text x="18" y="122" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb">Mode simulation : aucune modification ne sera appliquée.</tspan></text>
+<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">    ⋮</tspan></text>
+<text x="18" y="160" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Pilotes graphiques</tspan></text>
+<text x="18" y="179" fill="#d6dbf5" xml:space="preserve"><tspan>    GPU détecté(s) :</tspan></text>
+<text x="18" y="198" fill="#d6dbf5" xml:space="preserve"><tspan>      - Intel Corporation CometLake-U GT2 [UHD Graphics] (rev 02)</tspan></text>
+<text x="18" y="217" fill="#d6dbf5" xml:space="preserve"><tspan>      - NVIDIA Corporation GP108GLM [Quadro P520] (rev a1)</tspan></text>
+<text x="18" y="236" fill="#d6dbf5" xml:space="preserve"><tspan>    -&gt; Configuration NVIDIA</tspan></text>
+<text x="18" y="255" fill="#d6dbf5" xml:space="preserve"><tspan>    Pilote NVIDIA (akmod-nvidia) : </tspan><tspan fill="#89dceb">simulé</tspan></text>
+<text x="18" y="274" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf install -y akmod-nvidia</tspan></text>
+<text x="18" y="293" fill="#d6dbf5" xml:space="preserve"><tspan>    Support CUDA / NVENC (xorg-x11-drv-nvidia-cuda) : </tspan><tspan fill="#89dceb">simulé</tspan></text>
+<text x="18" y="312" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf install -y xorg-x11-drv-nvidia-cuda</tspan></text>
+<text x="18" y="331" fill="#d6dbf5" xml:space="preserve"><tspan>    Accélération vidéo NVIDIA (nvidia-vaapi-driver) : </tspan><tspan fill="#89dceb">simulé</tspan></text>
+<text x="18" y="350" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf install -y nvidia-vaapi-driver libva-utils vdpauinfo</tspan></text>
+<text x="18" y="369" fill="#d6dbf5" xml:space="preserve"><tspan>    </tspan><tspan fill="#f9e2af">Note : attendre ~5 min (compilation du module) avant de redémarrer.</tspan></text>
+<text x="18" y="388" fill="#d6dbf5" xml:space="preserve"><tspan>    </tspan><tspan fill="#f9e2af">Vérifier avec : modinfo -F version nvidia</tspan></text>
+<text x="18" y="407" fill="#d6dbf5" xml:space="preserve"><tspan>    -&gt; Configuration Intel</tspan></text>
+<text x="18" y="426" fill="#d6dbf5" xml:space="preserve"><tspan>    Accélération vidéo Intel (intel-media-driver) : </tspan><tspan fill="#89dceb">simulé</tspan></text>
+<text x="18" y="445" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf install -y intel-media-driver</tspan></text>
+<text x="18" y="464" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">    ⋮</tspan></text>
+<text x="18" y="502" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Récapitulatif</tspan></text>
+<text x="18" y="521" fill="#d6dbf5" xml:space="preserve"><tspan>    Mode simulation : </tspan><tspan fill="#89dceb">15</tspan><tspan> commande(s) affichée(s), aucune exécutée.</tspan></text>
+<text x="18" y="540" fill="#d6dbf5" xml:space="preserve"><tspan>    Relancez sans --dry-run pour appliquer réellement les changements.</tspan></text>
+</svg>

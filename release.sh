@@ -7,6 +7,10 @@
 #
 #  DESCRIPTION  : Publie une nouvelle version de fedora-setup.sh :
 #                 - incrémente VERSION (semver) dans fedora-setup.sh
+#                 - vérifie le script (bash -n, shellcheck) et la
+#                   synchronisation avec origin avant toute modification
+#                 - régénère les captures d'écran (docs/img), qui
+#                   affichent le numéro de version
 #                 - commit, tag vX.Y.Z, push (commit + tag)
 #                 Le push du tag déclenche le workflow GitHub Actions
 #                 (.github/workflows/release.yml) qui crée la Release GitHub.
@@ -25,6 +29,10 @@ readonly DEFAULT_BRANCH="master"
 # cette mise à jour, le site publié annoncerait indéfiniment la version
 # figée au moment de sa rédaction.
 readonly DOCS_DIR="${SCRIPT_DIR}/docs"
+
+# Générateur des captures d'écran du README et de la documentation.
+readonly SCREENSHOTS_TOOL="${SCRIPT_DIR}/tools/screenshots.py"
+readonly SCREENSHOTS_DIR="${DOCS_DIR}/img"
 
 usage() {
     cat << EOF
@@ -73,6 +81,33 @@ if [[ "$current_branch" != "$DEFAULT_BRANCH" ]]; then
     [[ "${answer,,}" == "y" ]] || { echo "Annulé."; exit 1; }
 fi
 
+# Le script publié tourne en root sur des machines réelles : on refuse de
+# publier une version qui ne passerait pas la CI (même contrôles qu'elle).
+if ! bash -n "$TARGET_FILE"; then
+    error "Erreur de syntaxe dans $(basename "$TARGET_FILE")."
+    exit 1
+fi
+if command -v shellcheck &> /dev/null; then
+    if ! shellcheck -S warning "$TARGET_FILE" "${SCRIPT_DIR}/release.sh"; then
+        error "ShellCheck signale des problèmes : corrigez-les avant de publier."
+        exit 1
+    fi
+else
+    echo "Attention : shellcheck absent, vérification ignorée (sudo dnf install ShellCheck)."
+fi
+
+# Une branche en retard sur origin ferait échouer le push après le commit
+# et le tag locaux : mieux vaut s'en apercevoir avant de modifier quoi que ce soit.
+if git -C "$SCRIPT_DIR" fetch --quiet origin "$DEFAULT_BRANCH" 2> /dev/null; then
+    behind="$(git -C "$SCRIPT_DIR" rev-list --count "HEAD..origin/${DEFAULT_BRANCH}")"
+    if [[ "$behind" -gt 0 ]]; then
+        error "La branche locale a ${behind} commit(s) de retard sur origin/${DEFAULT_BRANCH} : faites un git pull d'abord."
+        exit 1
+    fi
+else
+    echo "Attention : impossible de joindre origin, synchronisation non vérifiée."
+fi
+
 # --- Lecture et calcul de la nouvelle version ---
 
 current_version="$(grep -m1 '^readonly VERSION=' "$TARGET_FILE" | sed -E 's/^readonly VERSION="(.*)"$/\1/')"
@@ -116,18 +151,18 @@ if [[ -d "$DOCS_DIR" ]]; then
     doc_pages=$(grep -l '<span data-version>' "$DOCS_DIR"/*.html 2>/dev/null | wc -l || true)
 fi
 
+step=1
 echo "Ceci va :"
-echo "  1. Modifier VERSION dans $(basename "$TARGET_FILE")"
+echo "  $((step++)). Modifier VERSION dans $(basename "$TARGET_FILE")"
 if [[ $doc_pages -gt 0 ]]; then
-    echo "  2. Mettre à jour la version dans ${doc_pages} page(s) de docs/"
-    echo "  3. Commiter : « Release $tag »"
-    echo "  4. Créer le tag $tag"
-    echo "  5. Pousser $DEFAULT_BRANCH et $tag vers origin"
-else
-    echo "  2. Commiter : « Release $tag »"
-    echo "  3. Créer le tag $tag"
-    echo "  4. Pousser $DEFAULT_BRANCH et $tag vers origin"
+    echo "  $((step++)). Mettre à jour la version dans ${doc_pages} page(s) de docs/"
 fi
+if [[ -x "$SCREENSHOTS_TOOL" ]]; then
+    echo "  $((step++)). Régénérer les captures d'écran (docs/img/)"
+fi
+echo "  $((step++)). Commiter : « Release $tag »"
+echo "  $((step++)). Créer le tag $tag"
+echo "  $((step++)). Pousser $DEFAULT_BRANCH et $tag vers origin"
 echo
 read -r -p "Confirmer ? [y/N] : " answer
 [[ "${answer,,}" == "y" ]] || { echo "Annulé."; exit 1; }
@@ -160,6 +195,18 @@ if [[ -d "$DOCS_DIR" ]]; then
     done
     if [[ $updated_docs -gt 0 ]]; then
         echo "Documentation mise à jour : ${updated_docs} page(s)"
+    fi
+fi
+
+# Les captures affichent la bannière « Fedora Setup vX.Y.Z » : elles sont
+# régénérées depuis la sortie réelle du script, déjà à la nouvelle version.
+# Un échec n'est pas bloquant (les anciennes images restent valables).
+if [[ -x "$SCREENSHOTS_TOOL" ]]; then
+    if "$SCREENSHOTS_TOOL"; then
+        files_to_commit+=("$SCREENSHOTS_DIR")
+    else
+        echo "Attention : captures d'écran non régénérées, publication poursuivie."
+        git -C "$SCRIPT_DIR" checkout -- "$SCREENSHOTS_DIR" 2> /dev/null || true
     fi
 fi
 

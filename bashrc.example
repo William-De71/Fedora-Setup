@@ -42,9 +42,15 @@ parse_git_branch() {
     git branch 2>/dev/null | sed -n '/\* /s///p'
 }
 
+# Code retour de la dernière commande, capturé avant que les substitutions
+# du prompt (branche git…) ne l'écrasent : sans cela, la flèche reflèterait
+# le résultat du test de branche et non celui de la commande tapée.
+__ps1_save_status() { __ps1_status=$?; }
+PROMPT_COMMAND="__ps1_save_status${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
+
 # Définition du prompt coloré
 PS1="\n\[\e[0;90m\][\t]\[\e[0m\] "                            # heure en gris clair
 PS1+="\[\e[1;32m\]\u\[\e[0;37m\]@\[\e[1;34m\]\h "             # user@host
 PS1+="\[\e[0;33m\]\w"                                          # chemin courant
 PS1+="\[\e[0;35m\]\$(git_branch=\$(parse_git_branch); [ -n \"\$git_branch\" ] && echo \" [ \$git_branch]\")"  # branche git
-PS1+="\n\$(if [ \$? = 0 ]; then echo \"\[\e[1;32m\]❯\"; else echo \"\[\e[1;31m\]❯\"; fi)\[\e[0m\] "
+PS1+="\n\$(if [ \"\$__ps1_status\" = 0 ]; then echo \"\[\e[1;32m\]❯\"; else echo \"\[\e[1;31m\]❯\"; fi)\[\e[0m\] "
