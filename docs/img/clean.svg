@@ -8,16 +8,16 @@
 <circle cx="60" cy="17" r="6" fill="#28c840"/>
 <text x="367" y="21" fill="#7f849c" text-anchor="middle">fedora-setup --clean</text>
 <text x="18" y="65" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">$ </tspan><tspan fill="#d6dbf5" class="b">fedora-setup --clean --dry-run</tspan></text>
-<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.4.0 — nettoyage &amp; maintenance ===</tspan></text>
+<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.5.0 — nettoyage &amp; maintenance ===</tspan></text>
 <text x="18" y="122" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb">Mode simulation : aucune modification ne sera appliquée.</tspan></text>
-<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal  : </tspan><tspan fill="#f9e2af">tail -f /tmp/fedora-setup_20261028-145857.log</tspan></text>
+<text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal  : </tspan><tspan fill="#f9e2af">tail -f /tmp/fedora-setup_20261028-224949.log</tspan></text>
 <text x="18" y="179" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Paquets et cache DNF</tspan></text>
 <text x="18" y="198" fill="#d6dbf5" xml:space="preserve"><tspan>    Suppression des paquets orphelins : </tspan><tspan fill="#89dceb">simulé</tspan></text>
 <text x="18" y="217" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf autoremove -y</tspan></text>
 <text x="18" y="236" fill="#d6dbf5" xml:space="preserve"><tspan>    Purge du cache des paquets DNF : </tspan><tspan fill="#89dceb">simulé</tspan></text>
 <text x="18" y="255" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> dnf clean packages</tspan></text>
 <text x="18" y="293" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Journal systemd</tspan></text>
-<text x="18" y="312" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal systemd avant nettoyage : 193.7M</tspan></text>
+<text x="18" y="312" fill="#d6dbf5" xml:space="preserve"><tspan>    Journal systemd avant nettoyage : 192M</tspan></text>
 <text x="18" y="331" fill="#d6dbf5" xml:space="preserve"><tspan>    Réduction du journal à 200M : </tspan><tspan fill="#89dceb">simulé</tspan></text>
 <text x="18" y="350" fill="#d6dbf5" xml:space="preserve"><tspan>        </tspan><tspan class="b">$</tspan><tspan> journalctl --vacuum-size=200M</tspan></text>
 <text x="18" y="369" fill="#d6dbf5" xml:space="preserve"><tspan>    Plafond du journal déjà configuré (/etc/systemd/journald.conf.d/99-fedora-setup.conf)</tspan></text>

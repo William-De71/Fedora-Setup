@@ -8,7 +8,7 @@
 <circle cx="60" cy="17" r="6" fill="#28c840"/>
 <text x="296" y="21" fill="#7f849c" text-anchor="middle">fedora-setup — simulation</text>
 <text x="18" y="65" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">$ </tspan><tspan fill="#d6dbf5" class="b">fedora-setup --dry-run --yes</tspan></text>
-<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.4.0 — post-installation &amp; maintenance ===</tspan></text>
+<text x="18" y="103" fill="#d6dbf5" xml:space="preserve"><tspan class="b">=== Fedora Setup v0.5.0 — post-installation &amp; maintenance ===</tspan></text>
 <text x="18" y="122" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb">Mode simulation : aucune modification ne sera appliquée.</tspan></text>
 <text x="18" y="141" fill="#d6dbf5" xml:space="preserve"><tspan fill="#7f849c">    ⋮</tspan></text>
 <text x="18" y="160" fill="#d6dbf5" xml:space="preserve"><tspan fill="#89dceb" class="b">==&gt; Pilotes graphiques</tspan></text>
