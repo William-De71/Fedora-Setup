@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Référence des options — Fedora Setup</title>
-<meta name="description" content="Les 27 options de fedora-setup : ce que fait chacune, ce qu'elle modifie et comment revenir en arrière.">
+<meta name="description" content="Les 28 options de fedora-setup : ce que fait chacune, ce qu'elle modifie et comment revenir en arrière.">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -33,6 +33,7 @@
         <a href="#security"><code>--security</code></a>
         <a href="#devtools"><code>--devtools</code></a>
         <a href="#docker"><code>--docker</code></a>
+        <a href="#upgrade"><code>--upgrade</code></a>
         <a href="#bashrc"><code>--bashrc</code></a>
     </div>
 
@@ -84,6 +85,7 @@
                 <tr><td><code>--security</code></td><td>Vérification et durcissement</td></tr>
                 <tr><td><code>--devtools</code></td><td>Outils de développement</td></tr>
                 <tr><td><code>--docker</code></td><td>Docker CE</td></tr>
+                <tr><td><code>--upgrade</code></td><td>Montée de version Fedora (N → N+1)</td></tr>
                 <tr><td><code>--bashrc</code></td><td>Installer <code>~/.bashrc</code></td></tr>
                 <tr><td><code>--install</code></td><td>Installer la commande système</td></tr>
                 <tr><td><code>--update</code></td><td>Mettre à jour l'installation</td></tr>
@@ -436,6 +438,55 @@
             Le service est démarré pour la session courante mais
             <strong>n'est pas activé au démarrage</strong> — ce choix vous
             revient : <code>sudo systemctl enable --now docker</code>.
+        </p>
+    </div>
+
+    <div class="opt" id="upgrade">
+        <div class="opt-head">
+            <h3>--upgrade</h3>
+            <span class="tag root">root</span>
+            <span class="tag sim">simulable</span>
+        </div>
+        <p>
+            Passe à la <strong>version suivante de Fedora</strong> selon la
+            procédure officielle <code>dnf system-upgrade</code>. La version
+            cible n'est proposée qu'une fois <strong>publiée en stable</strong>
+            (d'après <code>fedoraproject.org/releases.json</code>) : une bêta
+            n'est jamais retenue. Sur un système déjà à jour, l'option le dit
+            et s'arrête.
+        </p>
+        <ol>
+            <li>Signale les dépôts tiers activés, le pilote NVIDIA (recompilé au premier démarrage) et un portable sur batterie</li>
+            <li>Demande confirmation, puis met entièrement à jour la version courante</li>
+            <li>Propose un instantané Btrfs de <code>/</code> (pris d'office avec <code>--snapshot</code>)</li>
+            <li>Télécharge les paquets de la nouvelle version</li>
+            <li>Propose de redémarrer pour l'installation hors ligne</li>
+        </ol>
+        <p>
+            Une seule version à la fois : si Fedora N+2 est déjà sortie, relancez
+            l'option une seconde fois après le premier redémarrage.
+        </p>
+<pre><code><span class="prompt">$</span> ./fedora-setup.sh --upgrade --dry-run   <span class="cmt"># voir ce qui serait fait</span>
+<span class="prompt">$</span> sudo fedora-setup --upgrade</code></pre>
+        <div class="note warn">
+            <div class="note-label">Si le téléchargement échoue</div>
+            <p>
+                Le plus souvent, un dépôt tiers (Docker, Chrome, Copr…) ne publie
+                pas encore pour la nouvelle version, ou un paquet n'y a plus
+                d'équivalent. Le script propose alors une seconde tentative en
+                ignorant les dépôts tiers le temps du téléchargement, et en
+                autorisant la suppression des paquets bloquants
+                (<code>--allowerasing</code>). Avec <code>--yes</code>, il
+                s'arrête plutôt que de supprimer des paquets sans que personne
+                ne lise la liste.
+            </p>
+        </div>
+        <p>
+            <strong>Revenir en arrière</strong> : tant que la machine n'a pas
+            redémarré, rien n'est installé — <code>sudo dnf offline clean</code>
+            annule. Après coup, seul l'instantané Btrfs permet un retour.
+            Avec <code>--yes</code>, le redémarrage n'est jamais lancé
+            d'office : <code>sudo dnf offline reboot</code> le déclenche.
         </p>
     </div>
 
