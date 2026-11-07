@@ -833,12 +833,13 @@ install_lists() {
 # son bus D-Bus de session pour toutes les opérations gext.
 #===============================================================================
 
-# Détermine l'utilisateur réel derrière le sudo (celui qui a une session GNOME).
-gnome_user() {
+# Détermine l'utilisateur réel derrière le sudo : propriétaire de la session
+# GNOME (extensions), du ~/.bashrc, et membre ajouté aux groupes libvirt/docker.
+real_user() {
     if [[ -n "${SUDO_USER:-}" ]]; then
         echo "$SUDO_USER"
     else
-        error "Impossible de déterminer l'utilisateur cible pour les extensions GNOME (lancez via sudo, pas en root direct)."
+        error "Impossible de déterminer l'utilisateur réel (lancez via sudo, pas en root direct)."
         return 1
     fi
 }
@@ -851,7 +852,7 @@ gnome_user() {
 # reconstruit explicitement via env, sans quoi gext reste introuvable.
 run_as_gnome_user() {
     local user uid home
-    user="$(gnome_user)" || return 1
+    user="$(real_user)" || return 1
     uid="$(id -u "$user")"
     home="$(getent passwd "$user" | cut -d: -f6)"
     sudo -u "$user" env \
@@ -885,7 +886,7 @@ setup_gnome_extensions_cli() {
         run "Installation de pipx" dnf install -y pipx
     fi
 
-    run "Installation de gnome-extensions-cli (pipx, utilisateur $(gnome_user))" \
+    run "Installation de gnome-extensions-cli (pipx, utilisateur $(real_user))" \
         run_as_gnome_user pipx install gnome-extensions-cli --system-site-packages
 }
 
@@ -936,7 +937,7 @@ install_gnome_extensions() {
     fi
 
     # stderr laissé visible : c'est l'erreur à laquelle renvoie le message.
-    if ! gnome_user > /dev/null; then
+    if ! real_user > /dev/null; then
         info "Étape ignorée (voir erreur ci-dessus)."
         return
     fi
@@ -1919,7 +1920,7 @@ devtools_virtualization() {
     # Sans appartenance au groupe libvirt, virt-manager réclame le mot de
     # passe root à chaque lancement.
     local user
-    if user="$(gnome_user)"; then
+    if user="$(real_user)"; then
         if id -nG "$user" | grep -qw libvirt; then
             info "L'utilisateur « $user » est déjà dans le groupe libvirt"
         else
@@ -1993,7 +1994,7 @@ install_bashrc() {
     fi
 
     local user home_dir dest
-    user="$(gnome_user)" || exit 1
+    user="$(real_user)" || exit 1
     home_dir="$(getent passwd "$user" | cut -d: -f6)"
     dest="${home_dir}/.bashrc"
 
@@ -2064,7 +2065,7 @@ docker_remove_conflicts() {
 # d'utiliser docker sans sudo. Le groupe est créé par le paquet docker-ce.
 docker_add_user_to_group() {
     local user
-    user="$(gnome_user)" || {
+    user="$(real_user)" || {
         info "Utilisateur cible inconnu : ajout au groupe docker ignoré."
         return 0
     }
