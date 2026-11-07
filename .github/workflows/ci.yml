@@ -40,12 +40,18 @@ jobs:
           fi
 
   smoke:
-    name: Simulation sur Fedora
+    name: Simulation sur Fedora ${{ matrix.fedora }}
     runs-on: ubuntu-latest
     needs: lint
+    # Les deux versions stables maintenues : celle d'où l'on part avec
+    # --upgrade et celle où l'on arrive. À décaler à chaque sortie de Fedora.
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ["44", "45"]
     # Image Fedora officielle : le script refuse de tourner ailleurs. Seul le
     # mode simulation est exercé, aucune commande n'est exécutée.
-    container: registry.fedoraproject.org/fedora:latest
+    container: registry.fedoraproject.org/fedora:${{ matrix.fedora }}
     steps:
       - uses: actions/checkout@v4
 
@@ -59,7 +65,7 @@ jobs:
 
       - name: Options autonomes simulées
         run: |
-          for opt in --clean --memory --boot --laptop --security --devtools --docker --install; do
+          for opt in --clean --memory --boot --laptop --security --devtools --docker --install --update-system --upgrade; do
             echo "::group::$opt"
             ./fedora-setup.sh "$opt" --dry-run --yes
             echo "::endgroup::"

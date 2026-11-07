@@ -8,7 +8,7 @@ autonomie et sécurité — sans refaire les mêmes gestes à chaque installatio
 
 [![Release](https://img.shields.io/github/v/release/William-De71/Fedora-Setup?style=flat-square&color=3c6eb4&label=release)](https://github.com/William-De71/Fedora-Setup/releases/latest)
 [![CI](https://img.shields.io/github/actions/workflow/status/William-De71/Fedora-Setup/ci.yml?branch=master&style=flat-square&label=CI)](https://github.com/William-De71/Fedora-Setup/actions/workflows/ci.yml)
-[![Fedora 41+](https://img.shields.io/badge/Fedora-41%2B-51a2da?style=flat-square&logo=fedora&logoColor=white)](https://fedoraproject.org/workstation/)
+[![Fedora 43+](https://img.shields.io/badge/Fedora-43%2B-51a2da?style=flat-square&logo=fedora&logoColor=white)](https://fedoraproject.org/workstation/)
 [![Bash](https://img.shields.io/badge/Bash-5-4eaa25?style=flat-square&logo=gnubash&logoColor=white)](fedora-setup.sh)
 [![ShellCheck](https://img.shields.io/badge/ShellCheck-vérifié-brightgreen?style=flat-square)](.github/workflows/ci.yml)
 [![Licence MIT](https://img.shields.io/github/license/William-De71/Fedora-Setup?style=flat-square&color=lightgrey)](LICENSE)
